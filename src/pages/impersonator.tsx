@@ -5,7 +5,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs.tsx";
 import ImpersonatorWalletConnect from "@/components/impersonator-wallet-connect.tsx";
-import ImpersonatorIframeView from "@/components/impersonator-iframe-view.tsx";
+import { ImpersonatorIframe } from "@/components/impersonator-iframe.tsx";
 
 export const ImpersonatorPage = () => {
   return (
@@ -19,7 +19,7 @@ export const ImpersonatorPage = () => {
           <ImpersonatorWalletConnect />
         </TabsContent>
         <TabsContent value="iFrame">
-          <ImpersonatorIframeView />
+          <ImpersonatorIframe />
         </TabsContent>
       </Tabs>
     </div>

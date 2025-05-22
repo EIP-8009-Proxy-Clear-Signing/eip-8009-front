@@ -2,17 +2,18 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
-import { SafeInjectProvider } from "./contexts/impersonator-iframe-context.tsx";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { WagmiProvider } from "wagmi";
+import { wagmiConfig } from "@/config/wagmi-config.ts";
 
 const queryClient = new QueryClient();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <SafeInjectProvider>
+    <WagmiProvider config={wagmiConfig}>
+      <QueryClientProvider client={queryClient}>
         <App />
-      </SafeInjectProvider>
-    </QueryClientProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   </StrictMode>,
 );
