@@ -1,43 +1,114 @@
-import { useEffect } from "react";
-import { useSafeInject } from "../contexts/impersonator-iframe-context";
+import { useEffect, useRef } from "react";
+import { useAccount, useWalletClient } from "wagmi";
 
-interface Props {
-  width: number | string;
-  height: number | string;
-  src: string;
-  address: string;
-  rpcUrl: string;
-  onLoad?: () => void;
-}
+const SDK_VERSION = "7.6.0";
+const SITE_URL = "https://swap.cow.fi";
+const IFRAME_SANDBOX_ALLOWED_FEATURES =
+  "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads allow-orientation-lock";
 
-export const ImpersonatorIframe = ({
-  width,
-  height,
-  src,
-  address,
-  rpcUrl,
-  onLoad,
-}: Props) => {
-  const { iframeRef, setAddress, setAppUrl, setRpcUrl } = useSafeInject();
+export function ImpersonatorIframe() {
+  const iframeRef = useRef<any>(null);
+  const { address } = useAccount();
+  const { data: walletClient } = useWalletClient();
+
+  const sendMessageToIFrame = ({
+    eventID,
+    error,
+    data,
+  }: {
+    eventID: any;
+    data?: any;
+    error?: any;
+  }) => {
+    if (iframeRef) {
+      const message = {
+        id: eventID,
+        success: !!data,
+        error,
+        version: SDK_VERSION,
+        data,
+      };
+
+      iframeRef.current?.contentWindow?.postMessage(message, SITE_URL! || "*");
+    }
+  };
 
   useEffect(() => {
-    if (src && address && setAddress) {
-      setAppUrl(src);
-      setAddress(address);
-      setRpcUrl(rpcUrl);
-    }
-  }, [src, setAppUrl, address, setAddress, rpcUrl, setRpcUrl]);
+    const handleMessage = async (event: any) => {
+      if (event.origin !== SITE_URL) return;
+      if (!walletClient) return;
+
+      const eventID = event.data?.id;
+      const params = event.data?.params;
+      const method = event.data?.method;
+
+      switch (method) {
+        case "getSafeInfo": {
+          sendMessageToIFrame({
+            eventID,
+            data: {
+              safeAddress: address,
+              chainId: 11155111,
+              owners: [],
+              threshold: 1,
+              isReadOnly: false,
+            },
+          });
+          return;
+        }
+
+        case "rpcCall": {
+          try {
+            const data = await walletClient.request({
+              method: params.call,
+              params: params.params,
+            });
+            sendMessageToIFrame({ eventID, data });
+            return;
+          } catch (error) {
+            console.log("event > rpcCall > error", error);
+
+            sendMessageToIFrame({ eventID, error });
+            return;
+          }
+        }
+
+        case "sendTransactions": {
+          try {
+            const data = await walletClient.request({
+              method: params.call,
+              params: params.txs,
+            });
+            sendMessageToIFrame({ eventID, data });
+            return;
+          } catch (error) {
+            console.log("event > sendTransactions > error", error);
+
+            sendMessageToIFrame({ eventID, error });
+            return;
+          }
+        }
+
+        default: {
+          console.log("> > > Unknown method:", method);
+          break;
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [walletClient, address]);
 
   return (
     <iframe
-      width={width}
-      height={height}
-      style={{
-        background: "white",
-      }}
-      src={src}
+      id={`iframe-${SITE_URL}`}
       ref={iframeRef}
-      onLoad={onLoad}
+      src={SITE_URL}
+      style={{ width: "100%", height: "600px", border: "none" }}
+      sandbox={IFRAME_SANDBOX_ALLOWED_FEATURES}
     />
   );
-};
+}
