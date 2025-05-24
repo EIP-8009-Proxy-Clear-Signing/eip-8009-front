@@ -80,6 +80,7 @@ function ImpersonatorWalletConnect() {
           },
         });
       } catch (error: any) {
+        console.log("error method", method, error);
         await client.respond({
           topic: event.topic,
           response: {
