@@ -44,6 +44,7 @@ export function ImpersonatorIframe() {
 
       switch (method) {
         case "getSafeInfo": {
+          console.log("< < < known method:", "getSafeInfo", event);
           sendMessageToIFrame({
             eventID,
             data: {
@@ -58,6 +59,7 @@ export function ImpersonatorIframe() {
         }
 
         case "rpcCall": {
+          console.log("< < < known method:", "rpcCall", event);
           try {
             const data = await walletClient.request({
               method: params.call,
@@ -74,11 +76,19 @@ export function ImpersonatorIframe() {
         }
 
         case "sendTransactions": {
+          console.log("< < < known method:", "sendTransactions", event);
           try {
-            const data = await walletClient.request({
-              method: params.call,
-              params: params.txs,
-            });
+            const tx = params.txs[0];
+
+            const txRequest = {
+              to: tx.to as `0x${string}`,
+              data: tx.data as `0x${string}`,
+              value: BigInt(tx.value),
+              gas: BigInt(tx.gas),
+            };
+
+            const data = await walletClient.sendTransaction(txRequest);
+
             sendMessageToIFrame({ eventID, data });
             return;
           } catch (error) {
@@ -89,8 +99,25 @@ export function ImpersonatorIframe() {
           }
         }
 
+        case "signTypedMessage": {
+          console.log("< < < known method:", "signTypedMessage", event);
+          try {
+            const data = await walletClient.request({
+              method: params.call,
+              params: params.params,
+            });
+            sendMessageToIFrame({ eventID, data });
+            return;
+          } catch (error) {
+            console.log("event > signTypedMessage > error", error);
+
+            sendMessageToIFrame({ eventID, error });
+            return;
+          }
+        }
+
         default: {
-          console.log("> > > Unknown method:", method);
+          console.log("? ? ? Unknown method:", method, event);
           break;
         }
       }
