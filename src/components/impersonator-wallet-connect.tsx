@@ -2,35 +2,24 @@ import { useAccount } from "wagmi";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-import { CHAINS } from "@/config/chains.ts";
 import { useWalletClient } from "wagmi";
-
 import { useWalletConnectClient } from "@/hooks/use-wallet-connect-client.ts";
 
 function ImpersonatorWalletConnect() {
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const { data: client } = useWalletConnectClient();
   const [wcUrl, setWcUrl] = useState("");
-  const [selectedChainId, setSelectedChainId] = useState(String(CHAINS[2].id));
   const { data: walletClient } = useWalletClient();
 
   useEffect(() => {
-    if (!client || !address || !selectedChainId || !walletClient) return;
+    if (!client || !address || !chainId || !walletClient) return;
 
     client.on("session_proposal", async (proposal) => {
       await client.approve({
         id: proposal.id,
         namespaces: {
           eip155: {
-            accounts: [`eip155:${selectedChainId}:${address}`],
+            accounts: [`eip155:${chainId}:${address}`],
             methods: [
               "eth_sendTransaction",
               "personal_sign",
@@ -103,7 +92,7 @@ function ImpersonatorWalletConnect() {
         client.removeAllListeners("session_delete");
       }
     };
-  }, [client, address, selectedChainId, walletClient]);
+  }, [client, address, chainId, walletClient]);
 
   async function handleConnect() {
     if (!client) return;
@@ -126,8 +115,6 @@ function ImpersonatorWalletConnect() {
     );
   }
 
-  if (!address) return null;
-
   return (
     <div className="flex flex-col gap-2">
       <Input
@@ -135,22 +122,22 @@ function ImpersonatorWalletConnect() {
         onChange={(e) => setWcUrl(e.target.value)}
         value={wcUrl}
       />
-      <Select value={selectedChainId} onValueChange={setSelectedChainId}>
-        <SelectTrigger className="w-full">
-          <SelectValue placeholder="Select network" />
-        </SelectTrigger>
-        <SelectContent>
-          {CHAINS.map((chain) => (
-            <SelectItem key={chain.id} value={String(chain.id)}>
-              {chain.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button variant="outline" onClick={handleDisconnect}>
-        Disconnect
-      </Button>
-      <Button onClick={handleConnect}>Connect</Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          className="bg-red-100"
+          variant="secondary"
+          onClick={handleDisconnect}
+        >
+          Disconnect
+        </Button>
+        <Button
+          variant="secondary"
+          className="bg-green-100"
+          onClick={handleConnect}
+        >
+          Connect
+        </Button>
+      </div>
     </div>
   );
 }
