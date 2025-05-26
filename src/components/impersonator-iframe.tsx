@@ -1,15 +1,20 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
+import {
+  getSDKVersion,
+  Methods,
+  SignMessageParams,
+} from "@safe-global/safe-apps-sdk";
+import { Input } from "@/components/ui/input.tsx";
 
-const SDK_VERSION = "7.6.0";
-const SITE_URL = "https://swap.cow.fi";
 const IFRAME_SANDBOX_ALLOWED_FEATURES =
   "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads allow-orientation-lock";
 
 export function ImpersonatorIframe() {
   const iframeRef = useRef<any>(null);
-  const { address } = useAccount();
+  const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const [url, setUrl] = useState("https://swap.cow.fi");
 
   const sendMessageToIFrame = ({
     eventID,
@@ -25,17 +30,17 @@ export function ImpersonatorIframe() {
         id: eventID,
         success: !!data,
         error,
-        version: SDK_VERSION,
+        version: getSDKVersion(),
         data,
       };
 
-      iframeRef.current?.contentWindow?.postMessage(message, SITE_URL! || "*");
+      iframeRef.current?.contentWindow?.postMessage(message, url! || "*");
     }
   };
 
   useEffect(() => {
     const handleMessage = async (event: any) => {
-      if (event.origin !== SITE_URL) return;
+      if (event.origin !== url) return;
       if (!walletClient) return;
 
       const eventID = event.data?.id;
@@ -43,13 +48,13 @@ export function ImpersonatorIframe() {
       const method = event.data?.method;
 
       switch (method) {
-        case "getSafeInfo": {
+        case Methods.getSafeInfo: {
           console.log("< < < known method:", "getSafeInfo", event);
           sendMessageToIFrame({
             eventID,
             data: {
               safeAddress: address,
-              chainId: 11155111,
+              chainId,
               owners: [],
               threshold: 1,
               isReadOnly: false,
@@ -58,7 +63,7 @@ export function ImpersonatorIframe() {
           return;
         }
 
-        case "rpcCall": {
+        case Methods.rpcCall: {
           console.log("< < < known method:", "rpcCall", event);
           try {
             const data = await walletClient.request({
@@ -75,19 +80,18 @@ export function ImpersonatorIframe() {
           }
         }
 
-        case "sendTransactions": {
+        case Methods.sendTransactions: {
           console.log("< < < known method:", "sendTransactions", event);
           try {
-            const tx = params.txs[0];
+            const data = [];
 
-            const txRequest = {
-              to: tx.to as `0x${string}`,
-              data: tx.data as `0x${string}`,
-              value: BigInt(tx.value),
-              gas: BigInt(tx.gas),
-            };
+            console.log(`sendTransactions > tx length >`, params.txs);
 
-            const data = await walletClient.sendTransaction(txRequest);
+            for (let q = 0; q < params.txs.length; q++) {
+              const res = await walletClient.sendTransaction(params.txs[q]);
+              console.log(`sendTransactions > tx id ${q} >`);
+              data.push(res);
+            }
 
             sendMessageToIFrame({ eventID, data });
             return;
@@ -99,17 +103,34 @@ export function ImpersonatorIframe() {
           }
         }
 
-        case "signTypedMessage": {
+        case Methods.signTypedMessage: {
           console.log("< < < known method:", "signTypedMessage", event);
           try {
-            const data = await walletClient.request({
-              method: params.call,
-              params: params.params,
+            const { message } = params as SignMessageParams;
+            const data = walletClient.signMessage({
+              message,
             });
             sendMessageToIFrame({ eventID, data });
             return;
           } catch (error) {
             console.log("event > signTypedMessage > error", error);
+
+            sendMessageToIFrame({ eventID, error });
+            return;
+          }
+        }
+
+        case Methods.signMessage: {
+          console.log("< < < known method:", "signMessage", event);
+          try {
+            const { message } = params as SignMessageParams;
+            const data = walletClient.signMessage({
+              message,
+            });
+            sendMessageToIFrame({ eventID, data });
+            return;
+          } catch (error) {
+            console.log("event > signMessage > error", error);
 
             sendMessageToIFrame({ eventID, error });
             return;
@@ -127,15 +148,22 @@ export function ImpersonatorIframe() {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [walletClient, address]);
+  }, [walletClient, address, url]);
 
   return (
-    <iframe
-      id={`iframe-${SITE_URL}`}
-      ref={iframeRef}
-      src={SITE_URL}
-      style={{ width: "100%", height: "600px", border: "none" }}
-      sandbox={IFRAME_SANDBOX_ALLOWED_FEATURES}
-    />
+    <div>
+      <Input
+        placeholder="url"
+        onChange={(e) => setUrl(e.target.value)}
+        value={url}
+      />
+      <iframe
+        id={`iframe-${url}`}
+        ref={iframeRef}
+        src={url}
+        style={{ width: "100%", height: "600px", border: "none" }}
+        sandbox={IFRAME_SANDBOX_ALLOWED_FEATURES}
+      />
+    </div>
   );
 }
