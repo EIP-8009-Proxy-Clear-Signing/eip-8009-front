@@ -1,23 +1,42 @@
 import * as React from "react";
 import { Connector, useConnect } from "wagmi";
 import { Button } from "@/components/ui/button.tsx";
-import { Card, CardContent } from "@/components/ui/card.tsx";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 export function WalletOptions() {
   const { connectors, connect } = useConnect();
 
   return (
-    <Card>
-      <CardContent className="gap-2 flex justify-center">
-        {connectors.map((connector) => (
-          <WalletOption
-            key={connector.uid}
-            connector={connector}
-            onClick={() => connect({ connector })}
-          />
-        ))}
-      </CardContent>
-    </Card>
+    <div>
+      <Dialog>
+        <DialogTrigger>
+          <Button>Connect Wallet</Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Connect Wallet</DialogTitle>
+            <DialogDescription>
+              <div className="grid grid-cols-1 gap-2">
+                {connectors.map((connector) => (
+                  <WalletOption
+                    key={connector.uid}
+                    connector={connector}
+                    onClick={() => connect({ connector })}
+                  />
+                ))}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 

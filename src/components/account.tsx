@@ -1,20 +1,25 @@
-import { useAccount, useDisconnect, useEnsAvatar, useEnsName } from "wagmi";
-import { Card, CardContent } from "@/components/ui/card.tsx";
+import { useAccount, useDisconnect } from "wagmi";
 import { Button } from "@/components/ui/button.tsx";
+import { EthAddress } from "@/components/common/eth-address.tsx";
+import { Identicon } from "@polkadot/react-identicon";
+import { LogOut } from "lucide-react";
 
 export function Account() {
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
-  const { data: ensName } = useEnsName({ address });
-  const { data: ensAvatar } = useEnsAvatar({ name: ensName! });
 
   return (
-    <Card>
-      <CardContent className="flex justify-center gap-2 items-center">
-        {ensAvatar && <img alt="ENS Avatar" src={ensAvatar} />}
-        {address && <div>{ensName ? `${ensName} (${address})` : address}</div>}
-        <Button onClick={() => disconnect()}>Disconnect</Button>
-      </CardContent>
-    </Card>
+    <div className="flex gap-2">
+      <Identicon
+        value={address}
+        size={32}
+        theme="ethereum"
+        className="identicon rounded-full overflow-hidden size-[32px]"
+      />
+      <EthAddress address={address} />
+      <Button variant="destructive" onClick={() => disconnect()}>
+        <LogOut />
+      </Button>
+    </div>
   );
 }
