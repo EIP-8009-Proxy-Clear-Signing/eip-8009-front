@@ -15,12 +15,11 @@ export const ImpersonatorPage = () => {
 
   return (
     <div className="flex flex-col gap-2">
-      <Tabs defaultValue="WalletConnect" className="w-full container mx-auto">
+      <Tabs defaultValue="WalletConnect" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="WalletConnect">WalletConnect</TabsTrigger>
           <TabsTrigger value="iFrame">iFrame</TabsTrigger>
         </TabsList>
-
         <TabsContent value="WalletConnect">
           <ImpersonatorWalletConnect />
         </TabsContent>

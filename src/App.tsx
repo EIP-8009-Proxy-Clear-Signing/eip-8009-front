@@ -1,14 +1,13 @@
 import { ImpersonatorPage } from "@/pages/impersonator.tsx";
-import { Account } from "@/components/account.tsx";
-import { WalletOptions } from "@/components/wallet-options.tsx";
-import { useAccount } from "wagmi";
+import { Header } from "@/components/common/header.tsx";
 
 function App() {
-  const { isConnected } = useAccount();
   return (
     <div>
-      {isConnected ? <Account /> : <WalletOptions />}
-      <ImpersonatorPage />
+      <Header />
+      <div className="container mx-auto">
+        <ImpersonatorPage />
+      </div>
     </div>
   );
 }

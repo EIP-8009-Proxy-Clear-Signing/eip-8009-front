@@ -151,19 +151,25 @@ export function ImpersonatorIframe() {
   }, [walletClient, address, url]);
 
   return (
-    <div>
+    <div className="flex flex-col gap-2">
       <Input
         placeholder="url"
         onChange={(e) => setUrl(e.target.value)}
         value={url}
       />
-      <iframe
-        id={`iframe-${url}`}
-        ref={iframeRef}
-        src={url}
-        style={{ width: "100%", height: "600px", border: "none" }}
-        sandbox={IFRAME_SANDBOX_ALLOWED_FEATURES}
-      />
+      <div className="border rounded-md overflow-hidden">
+        <iframe
+          id={`iframe-${url}`}
+          ref={iframeRef}
+          src={url}
+          style={{
+            width: "100%",
+            height: "calc(100vh - 159px)",
+            border: "none",
+          }}
+          sandbox={IFRAME_SANDBOX_ALLOWED_FEATURES}
+        />
+      </div>
     </div>
   );
 }

@@ -123,20 +123,10 @@ function ImpersonatorWalletConnect() {
         value={wcUrl}
       />
       <div className="grid grid-cols-2 gap-2">
-        <Button
-          className="bg-red-100"
-          variant="secondary"
-          onClick={handleDisconnect}
-        >
+        <Button variant="secondary" onClick={handleDisconnect}>
           Disconnect
         </Button>
-        <Button
-          variant="secondary"
-          className="bg-green-100"
-          onClick={handleConnect}
-        >
-          Connect
-        </Button>
+        <Button onClick={handleConnect}>Connect</Button>
       </div>
     </div>
   );
