@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useWalletClient } from "wagmi";
+import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import {
   getSDKVersion,
   Methods,
   SignMessageParams,
 } from "@safe-global/safe-apps-sdk";
 import { Input } from "@/components/ui/input.tsx";
+import { useChecks } from "@/hooks/use-checks";
+import { getProxyContract } from "@/lib/contracts";
+import { Address, erc20Abi } from "viem";
 
 const IFRAME_SANDBOX_ALLOWED_FEATURES =
   "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads allow-orientation-lock";
@@ -15,6 +18,8 @@ export function ImpersonatorIframe() {
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const [url, setUrl] = useState("https://swap.cow.fi");
+  const { checks } = useChecks();
+  const publicClient = usePublicClient();
 
   const sendMessageToIFrame = ({
     eventID,
@@ -86,6 +91,20 @@ export function ImpersonatorIframe() {
             const data = [];
 
             console.log(`sendTransactions > tx length >`, params.txs);
+
+            const proxy = getProxyContract(chainId);
+
+            const approvals = await publicClient?.multicall({
+              contracts: checks.approvals.map((check) => ({
+                abi: erc20Abi,
+                address: check.tokenAddress as Address,
+                functionName: "approve",
+                args: [address, proxy.address, BigInt(check.minimumBalance)]
+              })),
+              allowFailure: false,
+            });
+
+            console.log(`sendTransactions > approvals >`, approvals);
 
             for (let q = 0; q < params.txs.length; q++) {
               const res = await walletClient.sendTransaction(params.txs[q]);
