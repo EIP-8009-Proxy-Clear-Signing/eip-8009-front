@@ -1,11 +1,10 @@
-import { useAccount } from "wagmi";
+import { useAccount, useWalletClient } from "wagmi";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useWalletClient } from "wagmi";
 import { useWalletConnectClient } from "@/hooks/use-wallet-connect-client.ts";
 
-import { parseAbi, decodeFunctionData, encodeFunctionData } from "viem";
+import { decodeFunctionData, encodeFunctionData, parseAbi } from "viem";
 
 import { whatsabi } from "@shazow/whatsabi";
 
@@ -156,13 +155,11 @@ function ImpersonatorWalletConnect() {
             }
 
             // @ts-ignore
-            const newData = encodeFunctionData({
+            txRequest.data = encodeFunctionData({
               abi,
               functionName: decoded.functionName,
               args: newArgs as any[],
             });
-
-            txRequest.data = newData;
 
             const result = await walletClient.request({
               // @ts-ignore
