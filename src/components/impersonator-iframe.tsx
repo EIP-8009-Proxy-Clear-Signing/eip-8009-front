@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useWalletClient } from "wagmi";
+import { useAccount, usePublicClient, useWalletClient, useWriteContract } from "wagmi";
 import {
   getSDKVersion,
   Methods,
   SignMessageParams,
 } from "@safe-global/safe-apps-sdk";
 import { Input } from "@/components/ui/input.tsx";
+import { useChecks } from "@/hooks/use-checks";
+import { getProxyContract } from "@/lib/contracts";
+import { Address, erc20Abi, zeroAddress } from "viem";
 
 const IFRAME_SANDBOX_ALLOWED_FEATURES =
   "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads allow-orientation-lock";
@@ -15,6 +18,9 @@ export function ImpersonatorIframe() {
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const [url, setUrl] = useState("https://swap.cow.fi");
+  const { checks } = useChecks();
+  const publicClient = usePublicClient();
+  const { writeContractAsync } = useWriteContract();
 
   const sendMessageToIFrame = ({
     eventID,
@@ -81,16 +87,65 @@ export function ImpersonatorIframe() {
         }
 
         case Methods.sendTransactions: {
+          if (!address || !publicClient) {
+            console.log("sendTransactions > no address");
+            return;
+          }
           console.log("< < < known method:", "sendTransactions", event);
           try {
             const data = [];
 
             console.log(`sendTransactions > tx length >`, params.txs);
 
+            const proxy = getProxyContract(chainId);
+
+            console.log("approvals", checks.approvals);
+            const tokenApprovals = checks.approvals.filter((check) => check.token !== zeroAddress);
+
+            // console.log(`sendTransactions > approvals >`, allowances);
+
             for (let q = 0; q < params.txs.length; q++) {
-              const res = await walletClient.sendTransaction(params.txs[q]);
+              if (params.txs[q].data.includes("095ea7b3")) {
+                console.log("skip approve");
+                data.push("0x")
+                continue;
+              }
+
+              const allowances = await publicClient.multicall({
+                contracts: tokenApprovals.map((check) => ({
+                  abi: erc20Abi,
+                  address: check.token as Address,
+                  functionName: "allowance",
+                  args: [address, proxy.address]
+                })),
+                allowFailure: false,
+              });
+              console.log("allowances", allowances);
+  
+              for (let i = 0; i < allowances.length; i++) {
+                if (BigInt(allowances[i]) < BigInt(tokenApprovals[i].balance)) {
+                  const hash = await writeContractAsync({
+                    abi: erc20Abi,
+                    address: tokenApprovals[i].token as Address,
+                    functionName: "approve",
+                    args: [proxy.address, BigInt(tokenApprovals[i].balance)],
+                  });
+                  await publicClient.waitForTransactionReceipt({ hash });
+                }
+              }
+              console.log(params.txs[q].to);
+              console.log("checks", checks);
+              const value = checks.approvals.find((check) => check.token === zeroAddress)?.balance;
+              const hash = await writeContractAsync({
+                abi: proxy.abi,
+                address: proxy.address,
+                functionName: "proxyCallCalldata",
+                // @ts-expect-error Address is not typed
+                args: [checks.preTransfer, checks.approvals.map((check) => ({...check, target: params.txs[q].to})), params.txs[q].to, params.txs[q].data, checks.withdrawals, checks.postTransfer],
+                value: value ? BigInt(value) : undefined,
+              });
               console.log(`sendTransactions > tx id ${q} >`);
-              data.push(res);
+              data.push(hash);
             }
 
             sendMessageToIFrame({ eventID, data });
@@ -148,7 +203,7 @@ export function ImpersonatorIframe() {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [walletClient, address, url]);
+  }, [walletClient, address, url, checks]);
 
   return (
     <div className="flex flex-col gap-2">
