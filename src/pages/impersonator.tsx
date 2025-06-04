@@ -25,7 +25,7 @@ const createCheckComp = (title: string, target: string) => ({ check, onChange, o
         </div>
         <div className="flex flex-col gap-1">
           <Label>Token address:</Label>
-          <Input value={check.tokenAddress} onChange={(e) => onChange({ ...check, tokenAddress: e.target.value })} />
+          <Input value={check.token} onChange={(e) => onChange({ ...check, token: e.target.value })} />
         </div>
         <div className="flex flex-col gap-1">
           <Label>{target}:</Label>
@@ -33,7 +33,7 @@ const createCheckComp = (title: string, target: string) => ({ check, onChange, o
         </div>
         <div className="flex flex-col gap-1">
           <Label>Minimum balance:</Label>
-          <Input value={check.minimumBalance} onChange={(e) => onChange({ ...check, minimumBalance: e.target.value })} />
+          <Input value={check.balance} onChange={(e) => onChange({ ...check, balance: e.target.value })} />
         </div>
       </div>
     </Card>

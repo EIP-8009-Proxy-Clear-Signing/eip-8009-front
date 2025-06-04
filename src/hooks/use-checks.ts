@@ -1,8 +1,8 @@
 import { create } from "zustand";
 
 export type Check = {
-  tokenAddress: string;
-  minimumBalance: string;
+  token: string;
+  balance: string;
   target: string;
 };
 
@@ -29,13 +29,7 @@ export type UseChecks = {
 
 export const useChecks = create<UseChecks>((set) => ({
   checks: {
-    preTransfer: [
-      {
-        tokenAddress: "0x0000000000000000000000000000000000000000",
-        minimumBalance: "0",
-        target: "",
-      },
-    ],
+    preTransfer: [],
     approvals: [],
     withdrawals: [],
     postTransfer: [],
@@ -47,8 +41,8 @@ export const useChecks = create<UseChecks>((set) => ({
         preTransfer: [
           ...state.checks.preTransfer,
           {
-            tokenAddress: "",
-            minimumBalance: "",
+            token: "",
+            balance: "",
             target: "",
           },
         ],
@@ -80,8 +74,8 @@ export const useChecks = create<UseChecks>((set) => ({
         approvals: [
           ...state.checks.approvals,
           {
-            tokenAddress: "",
-            minimumBalance: "",
+            token: "",
+            balance: "",
             target: "",
           },
         ],
@@ -113,8 +107,8 @@ export const useChecks = create<UseChecks>((set) => ({
         withdrawals: [
           ...state.checks.withdrawals,
           {
-            tokenAddress: "",
-            minimumBalance: "",
+            token: "",
+            balance: "",
             target: "",
           },
         ],
@@ -146,8 +140,8 @@ export const useChecks = create<UseChecks>((set) => ({
         postTransfer: [
           ...state.checks.postTransfer,
           {
-            tokenAddress: "",
-            minimumBalance: "",
+            token: "",
+            balance: "",
             target: "",
           },
         ],
