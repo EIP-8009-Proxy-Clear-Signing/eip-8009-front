@@ -4,24 +4,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useWalletConnectClient } from "@/hooks/use-wallet-connect-client.ts";
 
-import { decodeFunctionData, encodeFunctionData, parseAbi } from "viem";
+import { Address, Hex } from "viem";
 
-import { whatsabi } from "@shazow/whatsabi";
+import { useModalPromise } from "@/hooks/use-modal-promise";
 
 function ImpersonatorWalletConnect() {
   const { address, chainId } = useAccount();
   const { data: client } = useWalletConnectClient();
   const [wcUrl, setWcUrl] = useState("");
   const { data: walletClient } = useWalletClient();
+  const { openModal } = useModalPromise();
 
   useEffect(() => {
-    if (!client || !address || !chainId || !walletClient) return;
+    if (!client || !address || !chainId || !walletClient) {
+      console.log("not ready", client, address, chainId, walletClient);
+      return;
+    }
 
     client.on("session_proposal", async (proposal) => {
       await client.approve({
         id: proposal.id,
         namespaces: {
           eip155: {
+            chains: ["eip155:11155111"],
             accounts: [`eip155:${chainId}:${address}`],
             methods: [
               "eth_sendTransaction",
@@ -30,7 +35,7 @@ function ImpersonatorWalletConnect() {
               "eth_signTypedData",
               "eth_signTypedData_v3",
               "eth_signTypedData_v4",
-              "wallet_getCapabilities",
+              // "wallet_getCapabilities",
               "eth_accounts",
               "eth_requestAccounts",
               "wallet_addEthereumChain",
@@ -45,8 +50,13 @@ function ImpersonatorWalletConnect() {
       });
     });
 
+    client.on("session_event", (event) => {
+      console.log("session_event", event);
+    })
+
     client.on("session_request", async (event) => {
       const { method, params } = event.params.request;
+      console.log("session_request", method, params);
 
       const formattedParams = params.map((p: string | object) => {
         if (typeof p === "string") {
@@ -71,101 +81,10 @@ function ImpersonatorWalletConnect() {
             [key: string]: any;
           };
 
-          if (!txRequest.data) {
-            try {
-              const result = await walletClient.request({
-                // @ts-ignore
-                method,
-                // @ts-ignore
-                params: [txRequest],
-              });
-              await client.respond({
-                topic: event.topic,
-                response: {
-                  id: event.id,
-                  jsonrpc: "2.0",
-                  result,
-                },
-              });
-            } catch (err: any) {
-              await client.respond({
-                topic: event.topic,
-                response: {
-                  id: event.id,
-                  jsonrpc: "2.0",
-                  error: {
-                    code: err.code || 4001,
-                    message: err.message || "Error sending tx",
-                  },
-                },
-              });
-            }
-            return;
-          }
-
           try {
-            const calldata: string = txRequest.data;
-            const selector = calldata.slice(0, 10);
-            const lookup = new whatsabi.loaders.FourByteSignatureLookup();
-            const signatures: string[] = await lookup.loadFunctions(selector);
-
-            if (signatures.length === 0) {
-              console.warn(`no known signature for selector ${selector}`);
-
-              const passthruResult = await walletClient.request({
-                // @ts-ignore
-                method,
-                // @ts-ignore
-                params: [txRequest],
-              });
-              await client.respond({
-                topic: event.topic,
-                response: {
-                  id: event.id,
-                  jsonrpc: "2.0",
-                  result: passthruResult,
-                },
-              });
-              return;
-            }
-
-            const fnSignature = signatures[0];
-            const fullFragment = `function ${fnSignature}`;
-            const abi = parseAbi([fullFragment]);
-
-            const decoded = decodeFunctionData({
-              abi,
-              // @ts-ignore
-              data: calldata,
-            });
-
-            console.log("decoded args", decoded.args);
-            console.log(`calling function ${decoded.functionName}`);
-            // @ts-ignore
-            let newArgs = [...decoded.args];
-
-            if (decoded.functionName === "transfer") {
-              // @ts-ignore
-              const originalAmount = decoded.args[1] as bigint;
-              const bumpedAmount = originalAmount + BigInt(10 ** 18);
-              newArgs[1] = bumpedAmount;
-              console.log(
-                `bumped amount from ${originalAmount} to ${bumpedAmount}`,
-              );
-            }
-
-            // @ts-ignore
-            txRequest.data = encodeFunctionData({
-              abi,
-              functionName: decoded.functionName,
-              args: newArgs as any[],
-            });
-
-            const result = await walletClient.request({
-              // @ts-ignore
-              method,
-              // @ts-ignore
-              params: [txRequest],
+            const hash = await openModal({
+              to: txRequest.to as Address,
+              data: txRequest.data as Hex,
             });
 
             await client.respond({
@@ -173,7 +92,7 @@ function ImpersonatorWalletConnect() {
               response: {
                 id: event.id,
                 jsonrpc: "2.0",
-                result,
+                result: hash,
               },
             });
           } catch (err: any) {
