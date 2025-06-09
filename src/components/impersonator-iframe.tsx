@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, usePublicClient, useWalletClient, useWriteContract } from "wagmi";
+import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import {
   getSDKVersion,
   Methods,
   SignMessageParams,
 } from "@safe-global/safe-apps-sdk";
 import { Input } from "@/components/ui/input.tsx";
-import { useChecks } from "@/hooks/use-checks";
-import { getProxyContract } from "@/lib/contracts";
-import { Address, erc20Abi, zeroAddress } from "viem";
 import { useModalPromise } from "@/hooks/use-modal-promise";
 
 const IFRAME_SANDBOX_ALLOWED_FEATURES =
@@ -19,9 +16,7 @@ export function ImpersonatorIframe() {
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
   const [url, setUrl] = useState("https://swap.cow.fi");
-  const { checks } = useChecks();
   const publicClient = usePublicClient();
-  const { writeContractAsync } = useWriteContract();
   const { openModal } = useModalPromise();
 
   const sendMessageToIFrame = ({
