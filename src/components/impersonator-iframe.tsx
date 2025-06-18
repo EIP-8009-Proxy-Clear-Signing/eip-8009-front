@@ -43,7 +43,7 @@ export function ImpersonatorIframe() {
 
   useEffect(() => {
     const handleMessage = async (event: any) => {
-      if (event.origin !== url) return;
+      if (event.origin !== new URL(url).origin) return;
       if (!walletClient) return;
 
       const eventID = event.data?.id;
@@ -97,10 +97,10 @@ export function ImpersonatorIframe() {
             for (let q = 0; q < params.txs.length; q++) {
               if (params.txs[q].data.includes("095ea7b3")) {
                 console.log("skip approve");
-                data.push("0x")
+                data.push("0x");
                 continue;
               }
-              
+
               console.log(`sendTransactions > tx id ${q} >`);
               const hash = await openModal(params.txs[q]);
               console.log("hash", hash);
