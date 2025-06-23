@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type Check = {
   token: string;
-  balance: string;
+  balance: number;
   target: string;
 };
 
@@ -42,7 +42,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.preTransfer,
           {
             token: "",
-            balance: "",
+            balance: 0,
             target: "",
           },
         ],
@@ -75,7 +75,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.approvals,
           {
             token: "",
-            balance: "",
+            balance: 0,
             target: "",
           },
         ],
@@ -108,7 +108,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.withdrawals,
           {
             token: "",
-            balance: "",
+            balance: 0,
             target: "",
           },
         ],
@@ -141,7 +141,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.postTransfer,
           {
             token: "",
-            balance: "",
+            balance: 0,
             target: "",
           },
         ],

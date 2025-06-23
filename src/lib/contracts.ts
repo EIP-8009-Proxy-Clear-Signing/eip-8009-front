@@ -21,6 +21,17 @@ const proxyAbi = [
   },
   {
     inputs: [
+      { internalType: "address", name: "token", type: "address" },
+      { internalType: "string", name: "expectedSymbol", type: "string" },
+      { internalType: "uint8", name: "expectedDecimals", type: "uint8" },
+      { internalType: "string", name: "actualSymbol", type: "string" },
+      { internalType: "uint8", name: "actualDecimals", type: "uint8" },
+    ],
+    name: "InvalidMetadata",
+    type: "error",
+  },
+  {
+    inputs: [
       {
         components: [
           { internalType: "address", name: "target", type: "address" },
@@ -119,13 +130,185 @@ const proxyAbi = [
     stateMutability: "payable",
     type: "function",
   },
+  {
+    inputs: [
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "postBalances",
+        type: "tuple[]",
+      },
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "preBalances",
+        type: "tuple[]",
+      },
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "approvals",
+        type: "tuple[]",
+      },
+      { internalType: "address", name: "target", type: "address" },
+      { internalType: "bytes", name: "data", type: "bytes" },
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "withdrawals",
+        type: "tuple[]",
+      },
+    ],
+    name: "proxyCallMetadata",
+    outputs: [{ internalType: "bytes", name: "", type: "bytes" }],
+    stateMutability: "payable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "postBalances",
+        type: "tuple[]",
+      },
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "preBalances",
+        type: "tuple[]",
+      },
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "approvals",
+        type: "tuple[]",
+      },
+      { internalType: "address", name: "target", type: "address" },
+      { internalType: "bytes", name: "data", type: "bytes" },
+      {
+        components: [
+          {
+            components: [
+              { internalType: "address", name: "target", type: "address" },
+              { internalType: "address", name: "token", type: "address" },
+              { internalType: "uint256", name: "balance", type: "uint256" },
+            ],
+            internalType: "struct IBalanceProxy.Balance",
+            name: "balance",
+            type: "tuple",
+          },
+          { internalType: "string", name: "symbol", type: "string" },
+          { internalType: "uint8", name: "decimals", type: "uint8" },
+        ],
+        internalType: "struct IBalanceProxy.BalanceMetadata[]",
+        name: "withdrawals",
+        type: "tuple[]",
+      },
+    ],
+    name: "proxyCallMetadataCalldata",
+    outputs: [{ internalType: "bytes", name: "", type: "bytes" }],
+    stateMutability: "payable",
+    type: "function",
+  },
   { stateMutability: "payable", type: "receive" },
 ] as const;
 
 export const contracts = {
   [sepolia.id]: {
     proxy: {
-      address: "0x8D95aCA53C6c41dD19032cD7C5559B68d4801C9E" as const,
+      address: "0xcA5a55fc680FD6266653f838E15D388BE1Fbe433" as const,
       abi: proxyAbi,
     },
   },
