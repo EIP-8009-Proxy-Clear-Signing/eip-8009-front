@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, usePublicClient, useSendTransaction, useWalletClient, useWriteContract } from "wagmi";
 import {
   getSDKVersion,
   Methods,
@@ -7,6 +7,7 @@ import {
 } from "@safe-global/safe-apps-sdk";
 import { Input } from "@/components/ui/input.tsx";
 import { useModalPromise } from "@/hooks/use-modal-promise";
+import { erc20Abi } from "viem";
 
 const IFRAME_SANDBOX_ALLOWED_FEATURES =
   "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads allow-orientation-lock";
@@ -18,6 +19,7 @@ export function ImpersonatorIframe() {
   const [url, setUrl] = useState("https://swap.cow.fi");
   const publicClient = usePublicClient();
   const { openModal } = useModalPromise();
+  const { sendTransactionAsync } = useSendTransaction();
 
   const sendMessageToIFrame = ({
     eventID,
@@ -96,8 +98,19 @@ export function ImpersonatorIframe() {
 
             for (let q = 0; q < params.txs.length; q++) {
               if (params.txs[q].data.includes("095ea7b3")) {
-                console.log("skip approve");
-                data.push("0x");
+                const hash = await sendTransactionAsync({
+                  to: params.txs[q].to as `0x${string}`,
+                  value: BigInt(params.txs[q].value),
+                  data: params.txs[q].data,
+                });
+                data.push(hash);
+                try {
+                  await publicClient.waitForTransactionReceipt({
+                    hash,
+                  });
+                } catch (error) {
+                  console.error(error);
+                }
                 continue;
               }
 
@@ -120,10 +133,9 @@ export function ImpersonatorIframe() {
         case Methods.signTypedMessage: {
           console.log("< < < known method:", "signTypedMessage", event);
           try {
-            const { message } = params as SignMessageParams;
-            const data = walletClient.signMessage({
-              message,
-            });
+            console.log("signTypedMessage > ", params);
+            const { typedData } = params as any;
+            const data = await walletClient.signTypedData(typedData);
             sendMessageToIFrame({ eventID, data });
             return;
           } catch (error) {
@@ -162,7 +174,7 @@ export function ImpersonatorIframe() {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [walletClient, address, url, openModal]);
+  }, [walletClient, address, url, openModal, chainId, publicClient]);
 
   return (
     <div className="flex flex-col gap-2">
