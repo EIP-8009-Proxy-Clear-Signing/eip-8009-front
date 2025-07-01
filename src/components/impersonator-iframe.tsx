@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, usePublicClient, useSendTransaction, useWalletClient } from "wagmi";
+import {
+  useAccount,
+  usePublicClient,
+  useSendTransaction,
+  useWalletClient,
+} from "wagmi";
 import {
   getSDKVersion,
   Methods,
@@ -16,7 +21,7 @@ export function ImpersonatorIframe() {
   const iframeRef = useRef<any>(null);
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const [url, setUrl] = useState("https://swap.cow.fi");
+  const [url, setUrl] = useState("https://app.uniswap.org/");
   const [deferredUrl] = useDebounce(url, 500);
   const publicClient = usePublicClient();
   const { openModal } = useModalPromise();
@@ -40,7 +45,10 @@ export function ImpersonatorIframe() {
         data,
       };
 
-      iframeRef.current?.contentWindow?.postMessage(message, deferredUrl! || "*");
+      iframeRef.current?.contentWindow?.postMessage(
+        message,
+        deferredUrl! || "*",
+      );
     }
   };
 
