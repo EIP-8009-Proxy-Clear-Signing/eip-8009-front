@@ -6,8 +6,13 @@ export type UseModalPromise = {
   tx: {
     to: Address;
     data: Hex;
+    value?: number;
   } | null;
-  openModal: (tx: { to: Address; data: Hex }) => Promise<string>;
+  openModal: (tx: {
+    to: Address;
+    data: Hex;
+    value?: number;
+  }) => Promise<string>;
   resolve: ((value: string) => void) | null;
   reject: ((reason: unknown) => void) | null;
   closeModal: () => void;
@@ -15,26 +20,26 @@ export type UseModalPromise = {
 };
 
 export const useModalPromise = create<UseModalPromise>((set, get) => ({
-    modalOpen: false,
-    tx: null,
-    openModal: (tx: { to: Address; data: Hex }) => {
-        set({ modalOpen: true, tx });
-        return new Promise((resolve, reject) => {
-            set({ resolve, reject });
-        });
-    },
-    resolve: null,
-    reject: null,
-    closeModal: () => {
-        const { reject } = get();
-        if (reject) {
-            reject(new Error("Modal closed"));
-        } else {
-            console.error("No reject function found");
-        }
-        set({ modalOpen: false, resolve: null, reject: null, tx: null });
-    },
-    hideModal: () => {
-        set({ modalOpen: false, resolve: null, reject: null, tx: null });
+  modalOpen: false,
+  tx: null,
+  openModal: (tx: { to: Address; data: Hex }) => {
+    set({ modalOpen: true, tx });
+    return new Promise((resolve, reject) => {
+      set({ resolve, reject });
+    });
+  },
+  resolve: null,
+  reject: null,
+  closeModal: () => {
+    const { reject } = get();
+    if (reject) {
+      reject(new Error("Modal closed"));
+    } else {
+      console.error("No reject function found");
     }
+    set({ modalOpen: false, resolve: null, reject: null, tx: null });
+  },
+  hideModal: () => {
+    set({ modalOpen: false, resolve: null, reject: null, tx: null });
+  },
 }));

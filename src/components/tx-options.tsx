@@ -1,71 +1,134 @@
 import { useModalPromise } from "@/hooks/use-modal-promise";
-import { Dialog, DialogTitle, DialogContent, DialogHeader, DialogDescription, DialogFooter } from "./ui/dialog";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogHeader,
+  DialogDescription,
+  DialogFooter,
+} from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Input } from "./ui/input";
 import { Loader2, X } from "lucide-react";
 import { Check, useChecks } from "@/hooks/use-checks";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
-import { useAccount, useChainId, usePublicClient, useWriteContract } from "wagmi";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "./ui/accordion";
+import {
+  useAccount,
+  useChainId,
+  usePublicClient,
+  useWriteContract,
+} from "wagmi";
 import { getProxyContract } from "@/lib/contracts";
-import { Abi, decodeFunctionData, encodeFunctionData, erc20Abi, parseAbi, parseUnits, PublicClient, zeroAddress } from "viem";
+import {
+  Abi,
+  decodeFunctionData,
+  encodeFunctionData,
+  erc20Abi,
+  parseAbi,
+  parseUnits,
+  PublicClient,
+  zeroAddress,
+} from "viem";
 import { whatsabi } from "@shazow/whatsabi";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { formatBalance, formatToken } from "@/lib/utils.ts";
 
-function swapAddressInArgsTraverse<T>(args: T, from: string, to: string): T {
-  // @ts-expect-error unknown is not typed
-  return Array.isArray(args) ? args.map((arg: unknown, index: number) => {
-    if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
-      console.log("found", index, arg, from, to);
-      return arg.toLowerCase().replaceAll(from, to) as T;
-    }
-    if (Array.isArray(arg)) {
-      return swapAddressInArgsTraverse(arg, from, to);
-    }
-    return arg;
-  }) : args as T;
+function swapAddressInArgsTraverse<T>(
+  args: T,
+  from: string,
+  to: string,
+): unknown[] | T {
+  return Array.isArray(args)
+    ? args.map((arg: unknown, index: number) => {
+        if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
+          console.log("found", index, arg, from, to);
+          return arg.toLowerCase().replaceAll(from, to) as T;
+        }
+        if (Array.isArray(arg)) {
+          return swapAddressInArgsTraverse(arg, from, to);
+        }
+        return arg;
+      })
+    : (args as T);
 }
 
-const createCheckComp = (title: string, target?: string) => ({ check, onChange, onRemove, index }: { check: Check, onChange: (check: Check) => void, onRemove: () => void, index: number }) => {
-  const onBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    const number = Number(value);
-    if (isNaN(number)) {
-      return;
-    }
-    onChange({ ...check, balance: number });
-  }
+const createCheckComp =
+  (title: string, target?: string) =>
+  ({
+    check,
+    onChange,
+    onRemove,
+    index,
+  }: {
+    check: Check;
+    onChange: (check: Check) => void;
+    onRemove: () => void;
+    index: number;
+  }) => {
+    const onBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      const number = Number(value);
+      if (isNaN(number)) {
+        return;
+      }
+      onChange({ ...check, balance: number });
+    };
 
-  return (
-    <Card className="p-2 rounded-sm">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <Label>{title} {index + 1}</Label>
-          <Button variant="ghost" size="icon" onClick={onRemove}><X /></Button>
+    return (
+      <Card className="p-2 rounded-sm">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <Label>
+              {title} {index + 1}
+            </Label>
+            <Button variant="ghost" size="icon" onClick={onRemove}>
+              <X />
+            </Button>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label>Token address:</Label>
+            <Input
+              value={check.token}
+              onChange={(e) => onChange({ ...check, token: e.target.value })}
+            />
+          </div>
+          {!!target && (
+            <div className="flex flex-col gap-1">
+              <Label>{target}:</Label>
+              <Input
+                value={check.target}
+                onChange={(e) => onChange({ ...check, target: e.target.value })}
+              />
+            </div>
+          )}
+          <div className="flex flex-col gap-1">
+            <Label>Minimum balance:</Label>
+            <Input
+              value={check.balance}
+              type="number"
+              onChange={onBalanceChange}
+            />
+          </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label>Token address:</Label>
-          <Input value={check.token} onChange={(e) => onChange({ ...check, token: e.target.value })} />
-        </div>
-        {!!target && (<div className="flex flex-col gap-1">
-          <Label>{target}:</Label>
-          <Input value={check.target} onChange={(e) => onChange({ ...check, target: e.target.value })} />
-        </div>)}
-        <div className="flex flex-col gap-1">
-          <Label>Minimum balance:</Label>
-          <Input value={check.balance} type="number" onChange={onBalanceChange} />
-        </div>
-      </div>
-    </Card>
-  )
-}
+      </Card>
+    );
+  };
 
 const CheckComp = createCheckComp("Check", "Check address");
 const ApprovalComp = createCheckComp("Approval");
 const WithdrawalComp = createCheckComp("Withdrawal", "Where to withdraw");
 
-const transformToMetadata = async (checks: Check[], publicClient: PublicClient) => {
+const transformToMetadata = async (
+  checks: Check[],
+  publicClient: PublicClient,
+) => {
   const filteredChecks = checks.filter((check) => check.token !== zeroAddress);
   const ether = checks.find((check) => check.token === zeroAddress);
 
@@ -79,7 +142,7 @@ const transformToMetadata = async (checks: Check[], publicClient: PublicClient) 
   const checksSymbols = await publicClient.multicall({
     contracts: checksSymbolRequests,
     allowFailure: false,
-  })
+  });
 
   const checksDecimalsRequests = filteredChecks.map(({ token }) => ({
     abi: erc20Abi,
@@ -97,7 +160,10 @@ const transformToMetadata = async (checks: Check[], publicClient: PublicClient) 
     balance: {
       target: balance.target as `0x${string}`,
       token: balance.token as `0x${string}`,
-      balance: parseUnits(balance.balance.toString().replace(",", "."), checksDecimals[index]),
+      balance: parseUnits(
+        balance.balance.toString().replace(",", "."),
+        checksDecimals[index],
+      ),
     },
     symbol: checksSymbols[index],
     decimals: checksDecimals[index],
@@ -116,7 +182,7 @@ const transformToMetadata = async (checks: Check[], publicClient: PublicClient) 
   }
 
   return result;
-}
+};
 
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -138,9 +204,72 @@ export const TxOptions = () => {
     removeWithdrawalCheck,
     createPostTransferCheck,
     changePostTransferCheck,
-    removePostTransferCheck
+    removePostTransferCheck,
   } = useChecks();
 
+  const setDataToForm = async () => {
+    if (!publicClient || tx === null) return;
+
+    const simRes = await publicClient.simulateCalls({
+      traceAssetChanges: true,
+      account: address,
+      calls: [
+        {
+          to: tx.to as `0x${string}`,
+          data: tx.data as `0x${string}`,
+          value: BigInt(tx.value || 0),
+        },
+      ],
+    });
+
+    const from = simRes.assetChanges.find((asset) => {
+      if (0 > asset.value.diff) {
+        return true;
+      }
+    });
+
+    const to = simRes.assetChanges.find((asset) => {
+      if (0 < asset.value.diff) {
+        return true;
+      }
+    });
+
+    console.log("FROM > TO", from, to);
+
+    if (!checks.approvals.length) {
+      createApprovalCheck();
+    }
+
+    if (!checks.withdrawals.length) {
+      createWithdrawalCheck();
+    }
+
+    if (!checks.postTransfer.length) {
+      createPostTransferCheck();
+    }
+
+    changeApprovalCheck(0, {
+      target: tx.to,
+      token: formatToken(from?.token.symbol, from?.token.address),
+      balance: formatBalance(from?.value.diff, from?.token.decimals),
+    });
+
+    changeWithdrawalCheck(0, {
+      target: String(address),
+      token: formatToken(to?.token.symbol, to?.token.address),
+      balance: formatBalance(to?.value.diff, to?.token.decimals),
+    });
+
+    changePostTransferCheck(0, {
+      target: String(address),
+      token: formatToken(to?.token.symbol, to?.token.address),
+      balance: formatBalance(to?.value.diff, to?.token.decimals),
+    });
+  };
+
+  useEffect(() => {
+    setDataToForm();
+  }, [tx]);
 
   const handleSave = async () => {
     setIsLoading(true);
@@ -171,8 +300,16 @@ export const TxOptions = () => {
       console.log("decoded args", decoded.args);
       console.log("decoded functionName", decoded.functionName);
 
-      let newArgs = swapAddressInArgsTraverse(decoded.args || [], address.toLowerCase(), proxy.address.toLowerCase());
-      newArgs = swapAddressInArgsTraverse(newArgs, address.slice(2).toLowerCase(), proxy.address.slice(2).toLowerCase());
+      let newArgs = swapAddressInArgsTraverse(
+        decoded.args || [],
+        address.toLowerCase(),
+        proxy.address.toLowerCase(),
+      );
+      newArgs = swapAddressInArgsTraverse(
+        newArgs,
+        address.slice(2).toLowerCase(),
+        proxy.address.slice(2).toLowerCase(),
+      );
 
       const newData = encodeFunctionData({
         abi,
@@ -183,9 +320,13 @@ export const TxOptions = () => {
       data = newData;
     }
 
-    const tokenApprovals = checks.approvals.filter((check) => check.token !== zeroAddress);
+    const tokenApprovals = checks.approvals.filter(
+      (check) => check.token !== zeroAddress,
+    );
 
-    const value = checks.approvals.find((check) => check.token === zeroAddress)?.balance;
+    const value = checks.approvals.find(
+      (check) => check.token === zeroAddress,
+    )?.balance;
 
     for (const token of tokenApprovals) {
       const [allowance, decimals] = await publicClient.multicall({
@@ -201,12 +342,15 @@ export const TxOptions = () => {
             address: token.token as `0x${string}`,
             functionName: "decimals",
             args: [],
-          }
+          },
         ],
         allowFailure: false,
       });
 
-      if (allowance >= parseUnits(token.balance.toString().replace(",", "."), decimals)) {
+      if (
+        allowance >=
+        parseUnits(token.balance.toString().replace(",", "."), decimals)
+      ) {
         continue;
       }
 
@@ -214,7 +358,10 @@ export const TxOptions = () => {
         abi: erc20Abi,
         address: token.token as `0x${string}`,
         functionName: "approve",
-        args: [proxy.address, parseUnits(token.balance.toString().replace(",", "."), decimals)],
+        args: [
+          proxy.address,
+          parseUnits(token.balance.toString().replace(",", "."), decimals),
+        ],
       });
 
       try {
@@ -228,24 +375,33 @@ export const TxOptions = () => {
       }
     }
 
-    const [postTransfers, preTransfers, approvals, withdrawals] = await Promise.all([
-      transformToMetadata(checks.postTransfer, publicClient),
-      transformToMetadata(checks.preTransfer, publicClient),
-      transformToMetadata(
-        tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
-        publicClient
-      ),
-      transformToMetadata(checks.withdrawals, publicClient),
-    ]);
-
+    const [postTransfers, preTransfers, approvals, withdrawals] =
+      await Promise.all([
+        transformToMetadata(checks.postTransfer, publicClient),
+        transformToMetadata(checks.preTransfer, publicClient),
+        transformToMetadata(
+          tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
+          publicClient,
+        ),
+        transformToMetadata(checks.withdrawals, publicClient),
+      ]);
 
     try {
       const hash = await writeContractAsync({
         abi: proxy.abi,
         address: proxy.address,
         functionName: "proxyCallMetadataCalldata",
-        args: [postTransfers, preTransfers, approvals, tx.to, data, withdrawals],
-        value: value ? parseUnits(value.toString().replace(",", "."), 18) : undefined,
+        args: [
+          postTransfers,
+          preTransfers,
+          approvals,
+          tx.to,
+          data,
+          withdrawals,
+        ],
+        value: value
+          ? parseUnits(value.toString().replace(",", "."), 18)
+          : undefined,
       });
 
       resolve(hash);
@@ -256,16 +412,19 @@ export const TxOptions = () => {
     } finally {
       setIsLoading(false);
     }
-  }
+  };
 
   if (!modalOpen) return null;
 
   return (
-    <Dialog open={modalOpen} onOpenChange={(open) => {
-      if (!open) {
-        closeModal();
-      }
-    }}>
+    <Dialog
+      open={modalOpen}
+      onOpenChange={(open) => {
+        if (!open) {
+          closeModal();
+        }
+      }}
+    >
       <DialogContent className="overflow-y-auto max-h-[80vh]">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
@@ -278,7 +437,13 @@ export const TxOptions = () => {
             <AccordionTrigger>Pre-transfer</AccordionTrigger>
             <AccordionContent className="flex flex-col gap-2">
               {checks.preTransfer.map((check, index) => (
-                <CheckComp key={index} check={check} onChange={(check) => changePreTransferCheck(index, check)} onRemove={() => removePreTransferCheck(index)} index={index} />
+                <CheckComp
+                  key={index}
+                  check={check}
+                  onChange={(check) => changePreTransferCheck(index, check)}
+                  onRemove={() => removePreTransferCheck(index)}
+                  index={index}
+                />
               ))}
               <Button onClick={createPreTransferCheck}>Add</Button>
             </AccordionContent>
@@ -287,7 +452,13 @@ export const TxOptions = () => {
             <AccordionTrigger>Approval</AccordionTrigger>
             <AccordionContent className="flex flex-col gap-2">
               {checks.approvals.map((check, index) => (
-                <ApprovalComp key={index} check={check} onChange={(check) => changeApprovalCheck(index, check)} onRemove={() => removeApprovalCheck(index)} index={index} />
+                <ApprovalComp
+                  key={index}
+                  check={check}
+                  onChange={(check) => changeApprovalCheck(index, check)}
+                  onRemove={() => removeApprovalCheck(index)}
+                  index={index}
+                />
               ))}
               <Button onClick={createApprovalCheck}>Add</Button>
             </AccordionContent>
@@ -296,7 +467,13 @@ export const TxOptions = () => {
             <AccordionTrigger>Withdrawal</AccordionTrigger>
             <AccordionContent className="flex flex-col gap-2">
               {checks.withdrawals.map((check, index) => (
-                <WithdrawalComp key={index} check={check} onChange={(check) => changeWithdrawalCheck(index, check)} onRemove={() => removeWithdrawalCheck(index)} index={index} />
+                <WithdrawalComp
+                  key={index}
+                  check={check}
+                  onChange={(check) => changeWithdrawalCheck(index, check)}
+                  onRemove={() => removeWithdrawalCheck(index)}
+                  index={index}
+                />
               ))}
               <Button onClick={createWithdrawalCheck}>Add</Button>
             </AccordionContent>
@@ -305,15 +482,26 @@ export const TxOptions = () => {
             <AccordionTrigger>Post-transfer</AccordionTrigger>
             <AccordionContent className="flex flex-col gap-2">
               {checks.postTransfer.map((check, index) => (
-                <CheckComp key={index} check={check} onChange={(check) => changePostTransferCheck(index, check)} onRemove={() => removePostTransferCheck(index)} index={index} />
+                <CheckComp
+                  key={index}
+                  check={check}
+                  onChange={(check) => changePostTransferCheck(index, check)}
+                  onRemove={() => removePostTransferCheck(index)}
+                  index={index}
+                />
               ))}
               <Button onClick={createPostTransferCheck}>Add</Button>
             </AccordionContent>
           </AccordionItem>
         </Accordion>
         <DialogFooter className="flex items-center justify-between">
-          <Button variant="outline" onClick={closeModal}>Close</Button>
-          <Button onClick={handleSave} disabled={isLoading}>{isLoading && <Loader2 className="animate-spin" />} {isLoading ? "Saving..." : "Save"}</Button>
+          <Button variant="outline" onClick={closeModal}>
+            Close
+          </Button>
+          <Button onClick={handleSave} disabled={isLoading}>
+            {isLoading && <Loader2 className="animate-spin" />}{" "}
+            {isLoading ? "Saving..." : "Save"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
