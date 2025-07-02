@@ -273,10 +273,12 @@ export const TxOptions = () => {
       console.error(error);
     }
 
+    const diff = to?.value.diff ?? 0n;
+
     changePostTransferCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
-      balance: formatBalance((to?.value.diff ?? 0n) + balance, to?.token.decimals),
+      balance: formatBalance(diff / 10n ** 14n * 10n ** 14n + balance, to?.token.decimals),
     });
   };
 
