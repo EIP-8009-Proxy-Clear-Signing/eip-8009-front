@@ -260,16 +260,29 @@ export const TxOptions = () => {
       balance: formatBalance(to?.value.diff, to?.token.decimals),
     });
 
+    let balance = 0n;
+
+    try {
+      balance = await publicClient.readContract({
+        abi: erc20Abi,
+        address: to?.token.address as `0x${string}`,
+        functionName: "balanceOf", 
+        args: [address as `0x${string}`],
+      });
+    } catch (error) {
+      console.error(error);
+    }
+
     changePostTransferCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
-      balance: formatBalance(to?.value.diff, to?.token.decimals),
+      balance: formatBalance((to?.value.diff ?? 0n) + balance, to?.token.decimals),
     });
   };
 
   useEffect(() => {
     setDataToForm();
-  }, [tx]);
+  }, [tx, address]);
 
   const handleSave = async () => {
     setIsLoading(true);
