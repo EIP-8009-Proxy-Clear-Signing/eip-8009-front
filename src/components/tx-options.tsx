@@ -31,6 +31,7 @@ import {
   decodeFunctionData,
   encodeFunctionData,
   erc20Abi,
+  ethAddress,
   parseAbi,
   parseUnits,
   PublicClient,
@@ -38,7 +39,7 @@ import {
 } from "viem";
 import { whatsabi } from "@shazow/whatsabi";
 import { useEffect, useState } from "react";
-import { formatBalance, formatToken } from "@/lib/utils.ts";
+import { formatBalance, formatToken, shortenAddress } from "@/lib/utils.ts";
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -47,79 +48,79 @@ function swapAddressInArgsTraverse<T>(
 ): unknown[] | T {
   return Array.isArray(args)
     ? args.map((arg: unknown, index: number) => {
-        if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
-          console.log("found", index, arg, from, to);
-          return arg.toLowerCase().replaceAll(from, to) as T;
-        }
-        if (Array.isArray(arg)) {
-          return swapAddressInArgsTraverse(arg, from, to);
-        }
-        return arg;
-      })
+      if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
+        console.log("found", index, arg, from, to);
+        return arg.toLowerCase().replaceAll(from, to) as T;
+      }
+      if (Array.isArray(arg)) {
+        return swapAddressInArgsTraverse(arg, from, to);
+      }
+      return arg;
+    })
     : (args as T);
 }
 
 const createCheckComp =
   (title: string, target?: string) =>
-  ({
-    check,
-    onChange,
-    onRemove,
-    index,
-  }: {
-    check: Check;
-    onChange: (check: Check) => void;
-    onRemove: () => void;
-    index: number;
-  }) => {
-    const onBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const value = e.target.value;
-      const number = Number(value);
-      if (isNaN(number)) {
-        return;
-      }
-      onChange({ ...check, balance: number });
-    };
+    ({
+      check,
+      onChange,
+      onRemove,
+      index,
+    }: {
+      check: Check;
+      onChange: (check: Check) => void;
+      onRemove: () => void;
+      index: number;
+    }) => {
+      const onBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const value = e.target.value;
+        const number = Number(value);
+        if (isNaN(number)) {
+          return;
+        }
+        onChange({ ...check, balance: number });
+      };
 
-    return (
-      <Card className="p-2 rounded-sm">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <Label>
-              {title} {index + 1}
-            </Label>
-            <Button variant="ghost" size="icon" onClick={onRemove}>
-              <X />
-            </Button>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label>Token address:</Label>
-            <Input
-              value={check.token}
-              onChange={(e) => onChange({ ...check, token: e.target.value })}
-            />
-          </div>
-          {!!target && (
+      return (
+        <Card className="p-2 rounded-sm">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <Label>
+                {title} {index + 1}
+              </Label>
+              <Button variant="ghost" size="icon" onClick={onRemove}>
+                <X />
+              </Button>
+            </div>
             <div className="flex flex-col gap-1">
-              <Label>{target}:</Label>
+              <Label>Token address:</Label>
               <Input
-                value={check.target}
-                onChange={(e) => onChange({ ...check, target: e.target.value })}
+                value={check.token}
+                onChange={(e) => onChange({ ...check, token: e.target.value })}
               />
             </div>
-          )}
-          <div className="flex flex-col gap-1">
-            <Label>Minimum balance:</Label>
-            <Input
-              value={check.balance}
-              type="number"
-              onChange={onBalanceChange}
-            />
+            {!!target && (
+              <div className="flex flex-col gap-1">
+                <Label>{target}:</Label>
+                <Input
+                  value={check.target}
+                  onChange={(e) => onChange({ ...check, target: e.target.value })}
+                />
+              </div>
+            )}
+            <div className="flex flex-col gap-1">
+              <Label>Minimum balance:</Label>
+              <Input
+                value={check.balance}
+                type="number"
+                onChange={onBalanceChange}
+              />
+            </div>
           </div>
-        </div>
-      </Card>
-    );
-  };
+        </Card>
+      );
+    };
 
 const CheckComp = createCheckComp("Check", "Check address");
 const ApprovalComp = createCheckComp("Approval");
@@ -186,7 +187,7 @@ const transformToMetadata = async (
 
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const { modalOpen, closeModal, tx, resolve, hideModal } = useModalPromise();
+  const { modalOpen, closeModal, tx, resolve, hideModal, isAdvanced, toggleAdvanced } = useModalPromise();
   const { address } = useAccount();
   const chainId = useChainId();
   const publicClient = usePublicClient();
@@ -248,16 +249,67 @@ export const TxOptions = () => {
       createPostTransferCheck();
     }
 
+    let appSymbol = "ETH";
+    let appDecimals = 18;
+
+    if (from?.token.address !== zeroAddress && from?.token.address !== ethAddress) {
+      [appSymbol, appDecimals] = await publicClient.multicall({
+        contracts: [
+          {
+            abi: erc20Abi,
+            address: from?.token.address as `0x${string}`,
+            functionName: "symbol" as const,
+            args: [],
+          },
+          {
+            abi: erc20Abi,
+            address: from?.token.address as `0x${string}`,
+            functionName: "decimals" as const,
+            args: [],
+          }
+        ],
+        allowFailure: false,
+      });
+    }
+
     changeApprovalCheck(0, {
       target: tx.to,
       token: formatToken(from?.token.symbol, from?.token.address),
       balance: formatBalance(from?.value.diff, from?.token.decimals),
+      symbol: appSymbol,
+      decimals: appDecimals,
     });
+
+    let withSymbol = "ETH";
+    let withDecimals = 18;
+
+    if (to?.token.address !== zeroAddress && to?.token.address !== ethAddress) {
+
+      [withSymbol, withDecimals] = await publicClient.multicall({
+        contracts: [
+          {
+            abi: erc20Abi,
+            address: to?.token.address as `0x${string}`,
+            functionName: "symbol" as const,
+            args: [],
+          },
+          {
+            abi: erc20Abi,
+            address: to?.token.address as `0x${string}`,
+            functionName: "decimals" as const,
+            args: [],
+          },
+        ],
+        allowFailure: false,
+      })
+    };
 
     changeWithdrawalCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
       balance: formatBalance(to?.value.diff, to?.token.decimals),
+      symbol: withSymbol,
+      decimals: withDecimals,
     });
 
     let balance = 0n;
@@ -266,7 +318,7 @@ export const TxOptions = () => {
       balance = await publicClient.readContract({
         abi: erc20Abi,
         address: to?.token.address as `0x${string}`,
-        functionName: "balanceOf", 
+        functionName: "balanceOf",
         args: [address as `0x${string}`],
       });
     } catch (error) {
@@ -443,72 +495,89 @@ export const TxOptions = () => {
       <DialogContent className="overflow-y-auto max-h-[80vh]">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>
-            {tx ? `Call to ${tx.to}` : "Setup your tx options here."}
+          <DialogDescription className="flex items-center justify-between">
+            <span className="text-sm">
+              {tx ? `Call to ${shortenAddress(tx.to)}` : "Setup your tx options here."}
+            </span>
+            <Button variant="outline" onClick={toggleAdvanced}>
+              {isAdvanced ? "Hide advanced" : "Show advanced"}
+            </Button>
           </DialogDescription>
         </DialogHeader>
-        <Accordion type="single" collapsible defaultValue="pre-transfer">
-          <AccordionItem value="pre-transfer">
-            <AccordionTrigger>Pre-transfer</AccordionTrigger>
-            <AccordionContent className="flex flex-col gap-2">
-              {checks.preTransfer.map((check, index) => (
-                <CheckComp
-                  key={index}
-                  check={check}
-                  onChange={(check) => changePreTransferCheck(index, check)}
-                  onRemove={() => removePreTransferCheck(index)}
-                  index={index}
-                />
-              ))}
-              <Button onClick={createPreTransferCheck}>Add</Button>
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="approval">
-            <AccordionTrigger>Approval</AccordionTrigger>
-            <AccordionContent className="flex flex-col gap-2">
-              {checks.approvals.map((check, index) => (
-                <ApprovalComp
-                  key={index}
-                  check={check}
-                  onChange={(check) => changeApprovalCheck(index, check)}
-                  onRemove={() => removeApprovalCheck(index)}
-                  index={index}
-                />
-              ))}
-              <Button onClick={createApprovalCheck}>Add</Button>
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="withdrawal">
-            <AccordionTrigger>Withdrawal</AccordionTrigger>
-            <AccordionContent className="flex flex-col gap-2">
-              {checks.withdrawals.map((check, index) => (
-                <WithdrawalComp
-                  key={index}
-                  check={check}
-                  onChange={(check) => changeWithdrawalCheck(index, check)}
-                  onRemove={() => removeWithdrawalCheck(index)}
-                  index={index}
-                />
-              ))}
-              <Button onClick={createWithdrawalCheck}>Add</Button>
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="post-transfer">
-            <AccordionTrigger>Post-transfer</AccordionTrigger>
-            <AccordionContent className="flex flex-col gap-2">
-              {checks.postTransfer.map((check, index) => (
-                <CheckComp
-                  key={index}
-                  check={check}
-                  onChange={(check) => changePostTransferCheck(index, check)}
-                  onRemove={() => removePostTransferCheck(index)}
-                  index={index}
-                />
-              ))}
-              <Button onClick={createPostTransferCheck}>Add</Button>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+        {isAdvanced ? (
+          <Accordion type="single" collapsible defaultValue="pre-transfer">
+            <AccordionItem value="pre-transfer">
+              <AccordionTrigger>Pre-transfer</AccordionTrigger>
+              <AccordionContent className="flex flex-col gap-2">
+                {checks.preTransfer.map((check, index) => (
+                  <CheckComp
+                    key={index}
+                    check={check}
+                    onChange={(check) => changePreTransferCheck(index, check)}
+                    onRemove={() => removePreTransferCheck(index)}
+                    index={index}
+                  />
+                ))}
+                <Button onClick={createPreTransferCheck}>Add</Button>
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="approval">
+              <AccordionTrigger>Approval</AccordionTrigger>
+              <AccordionContent className="flex flex-col gap-2">
+                {checks.approvals.map((check, index) => (
+                  <ApprovalComp
+                    key={index}
+                    check={check}
+                    onChange={(check) => changeApprovalCheck(index, check)}
+                    onRemove={() => removeApprovalCheck(index)}
+                    index={index}
+                  />
+                ))}
+                <Button onClick={createApprovalCheck}>Add</Button>
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="withdrawal">
+              <AccordionTrigger>Withdrawal</AccordionTrigger>
+              <AccordionContent className="flex flex-col gap-2">
+                {checks.withdrawals.map((check, index) => (
+                  <WithdrawalComp
+                    key={index}
+                    check={check}
+                    onChange={(check) => changeWithdrawalCheck(index, check)}
+                    onRemove={() => removeWithdrawalCheck(index)}
+                    index={index}
+                  />
+                ))}
+                <Button onClick={createWithdrawalCheck}>Add</Button>
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="post-transfer">
+              <AccordionTrigger>Post-transfer</AccordionTrigger>
+              <AccordionContent className="flex flex-col gap-2">
+                {checks.postTransfer.map((check, index) => (
+                  <CheckComp
+                    key={index}
+                    check={check}
+                    onChange={(check) => changePostTransferCheck(index, check)}
+                    onRemove={() => removePostTransferCheck(index)}
+                    index={index}
+                  />
+                ))}
+                <Button onClick={createPostTransferCheck}>Add</Button>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        ) : <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label>You spend:</Label>
+            {checks.approvals.map((check) => (<p key={check.token} className="text-lg font-bold">- {check.balance.toFixed(3)} {check.symbol}</p>))}
+          </div>
+          <div className="flex flex-col gap-2">
+            <Label>You receive:</Label>
+            {checks.withdrawals.map((check) => (<p key={check.token} className="text-lg font-bold">+ {check.balance.toFixed(3)} {check.symbol}</p>))}
+          </div>
+        </div>}
+
         <DialogFooter className="flex items-center justify-between">
           <Button variant="outline" onClick={closeModal}>
             Close
