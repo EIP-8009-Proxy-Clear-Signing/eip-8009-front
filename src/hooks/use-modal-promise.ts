@@ -2,6 +2,7 @@ import { Address, Hex } from "viem";
 import { create } from "zustand";
 
 export type UseModalPromise = {
+  isAdvanced: boolean;
   modalOpen: boolean;
   tx: {
     to: Address;
@@ -17,9 +18,11 @@ export type UseModalPromise = {
   reject: ((reason: unknown) => void) | null;
   closeModal: () => void;
   hideModal: () => void;
+  toggleAdvanced: () => void;
 };
 
 export const useModalPromise = create<UseModalPromise>((set, get) => ({
+  isAdvanced: false,
   modalOpen: false,
   tx: null,
   openModal: (tx: { to: Address; data: Hex }) => {
@@ -41,5 +44,8 @@ export const useModalPromise = create<UseModalPromise>((set, get) => ({
   },
   hideModal: () => {
     set({ modalOpen: false, resolve: null, reject: null, tx: null });
+  },
+  toggleAdvanced: () => {
+    set((state) => ({ isAdvanced: !state.isAdvanced }));
   },
 }));

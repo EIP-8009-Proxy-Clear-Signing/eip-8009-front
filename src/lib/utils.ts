@@ -17,3 +17,7 @@ export const formatBalance = (
 ) => {
   return Math.abs(Number(value) || 1) / 10 ** (decimals || 1);
 };
+
+export const shortenAddress = (address: string) => {
+  return address.slice(0, 6) + "..." + address.slice(-4);
+};
