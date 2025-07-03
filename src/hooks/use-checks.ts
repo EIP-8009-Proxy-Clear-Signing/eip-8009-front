@@ -4,6 +4,8 @@ export type Check = {
   token: string;
   balance: number;
   target: string;
+  decimals?: number;
+  symbol?: string;
 };
 
 export type UseChecks = {
