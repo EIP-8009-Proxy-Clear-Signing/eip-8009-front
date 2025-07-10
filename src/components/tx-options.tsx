@@ -48,79 +48,79 @@ function swapAddressInArgsTraverse<T>(
 ): unknown[] | T {
   return Array.isArray(args)
     ? args.map((arg: unknown, index: number) => {
-      if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
-        console.log("found", index, arg, from, to);
-        return arg.toLowerCase().replaceAll(from, to) as T;
-      }
-      if (Array.isArray(arg)) {
-        return swapAddressInArgsTraverse(arg, from, to);
-      }
-      return arg;
-    })
+        if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
+          console.log("found", index, arg, from, to);
+          return arg.toLowerCase().replaceAll(from, to) as T;
+        }
+        if (Array.isArray(arg)) {
+          return swapAddressInArgsTraverse(arg, from, to);
+        }
+        return arg;
+      })
     : (args as T);
 }
 
 const createCheckComp =
   (title: string, target?: string) =>
-    ({
-      check,
-      onChange,
-      onRemove,
-      index,
-    }: {
-      check: Check;
-      onChange: (check: Check) => void;
-      onRemove: () => void;
-      index: number;
-    }) => {
-      const onBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const value = e.target.value;
-        const number = Number(value);
-        if (isNaN(number)) {
-          return;
-        }
-        onChange({ ...check, balance: number });
-      };
-
-      return (
-        <Card className="p-2 rounded-sm">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <Label>
-                {title} {index + 1}
-              </Label>
-              <Button variant="ghost" size="icon" onClick={onRemove}>
-                <X />
-              </Button>
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label>Token address:</Label>
-              <Input
-                value={check.token}
-                onChange={(e) => onChange({ ...check, token: e.target.value })}
-              />
-            </div>
-            {!!target && (
-              <div className="flex flex-col gap-1">
-                <Label>{target}:</Label>
-                <Input
-                  value={check.target}
-                  onChange={(e) => onChange({ ...check, target: e.target.value })}
-                />
-              </div>
-            )}
-            <div className="flex flex-col gap-1">
-              <Label>Minimum balance:</Label>
-              <Input
-                value={check.balance}
-                type="number"
-                onChange={onBalanceChange}
-              />
-            </div>
-          </div>
-        </Card>
-      );
+  ({
+    check,
+    onChange,
+    onRemove,
+    index,
+  }: {
+    check: Check;
+    onChange: (check: Check) => void;
+    onRemove: () => void;
+    index: number;
+  }) => {
+    const onBalanceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      const number = Number(value);
+      if (isNaN(number)) {
+        return;
+      }
+      onChange({ ...check, diff: number });
     };
+
+    return (
+      <Card className="p-2 rounded-sm">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <Label>
+              {title} {index + 1}
+            </Label>
+            <Button variant="ghost" size="icon" onClick={onRemove}>
+              <X />
+            </Button>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label>Token address:</Label>
+            <Input
+              value={check.token}
+              onChange={(e) => onChange({ ...check, token: e.target.value })}
+            />
+          </div>
+          {!!target && (
+            <div className="flex flex-col gap-1">
+              <Label>{target}:</Label>
+              <Input
+                value={check.target}
+                onChange={(e) => onChange({ ...check, target: e.target.value })}
+              />
+            </div>
+          )}
+          <div className="flex flex-col gap-1">
+            <Label>Minimum balance:</Label>
+            <Input
+              value={check.diff}
+              type="number"
+              onChange={onBalanceChange}
+            />
+          </div>
+        </div>
+      </Card>
+    );
+  };
 
 const CheckComp = createCheckComp("Check", "Check address");
 const ApprovalComp = createCheckComp("Approval");
@@ -161,8 +161,8 @@ const transformToMetadata = async (
     balance: {
       target: balance.target as `0x${string}`,
       token: balance.token as `0x${string}`,
-      balance: parseUnits(
-        balance.balance.toString().replace(",", "."),
+      diff: parseUnits(
+        balance.diff.toString().replace(",", "."),
         checksDecimals[index],
       ),
     },
@@ -175,7 +175,7 @@ const transformToMetadata = async (
       balance: {
         target: ether.target as `0x${string}`,
         token: zeroAddress,
-        balance: parseUnits(ether.balance.toString().replace(",", "."), 18),
+        diff: parseUnits(ether.diff.toString().replace(",", "."), 18),
       },
       symbol: "ETH",
       decimals: 18,
@@ -187,25 +187,30 @@ const transformToMetadata = async (
 
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
-  const { modalOpen, closeModal, tx, resolve, hideModal, isAdvanced, toggleAdvanced } = useModalPromise();
+  const {
+    modalOpen,
+    closeModal,
+    tx,
+    resolve,
+    hideModal,
+    isAdvanced,
+    toggleAdvanced,
+  } = useModalPromise();
   const { address } = useAccount();
   const chainId = useChainId();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const {
     checks,
-    createPreTransferCheck,
-    changePreTransferCheck,
-    removePreTransferCheck,
     createApprovalCheck,
     changeApprovalCheck,
     removeApprovalCheck,
     createWithdrawalCheck,
     changeWithdrawalCheck,
     removeWithdrawalCheck,
-    createPostTransferCheck,
-    changePostTransferCheck,
-    removePostTransferCheck,
+    createDiffsCheck,
+    changeDiffsCheck,
+    removeDiffsCheck,
   } = useChecks();
 
   const setDataToForm = async () => {
@@ -245,14 +250,17 @@ export const TxOptions = () => {
       createWithdrawalCheck();
     }
 
-    if (!checks.postTransfer.length) {
-      createPostTransferCheck();
+    if (!checks.diffs.length) {
+      createDiffsCheck();
     }
 
     let appSymbol = "ETH";
     let appDecimals = 18;
 
-    if (from?.token.address !== zeroAddress && from?.token.address !== ethAddress) {
+    if (
+      from?.token.address !== zeroAddress &&
+      from?.token.address !== ethAddress
+    ) {
       [appSymbol, appDecimals] = await publicClient.multicall({
         contracts: [
           {
@@ -266,7 +274,7 @@ export const TxOptions = () => {
             address: from?.token.address as `0x${string}`,
             functionName: "decimals" as const,
             args: [],
-          }
+          },
         ],
         allowFailure: false,
       });
@@ -275,7 +283,7 @@ export const TxOptions = () => {
     changeApprovalCheck(0, {
       target: tx.to,
       token: formatToken(from?.token.symbol, from?.token.address),
-      balance: formatBalance(from?.value.diff, from?.token.decimals),
+      diff: formatBalance(from?.value.diff, from?.token.decimals),
       symbol: appSymbol,
       decimals: appDecimals,
     });
@@ -284,7 +292,6 @@ export const TxOptions = () => {
     let withDecimals = 18;
 
     if (to?.token.address !== zeroAddress && to?.token.address !== ethAddress) {
-
       [withSymbol, withDecimals] = await publicClient.multicall({
         contracts: [
           {
@@ -301,13 +308,13 @@ export const TxOptions = () => {
           },
         ],
         allowFailure: false,
-      })
-    };
+      });
+    }
 
     changeWithdrawalCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
-      balance: formatBalance(to?.value.diff, to?.token.decimals),
+      diff: formatBalance(to?.value.diff, to?.token.decimals),
       symbol: withSymbol,
       decimals: withDecimals,
     });
@@ -327,10 +334,13 @@ export const TxOptions = () => {
 
     const diff = to?.value.diff ?? 0n;
 
-    changePostTransferCheck(0, {
+    changeDiffsCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
-      balance: formatBalance(diff / 10n ** 14n * 10n ** 14n + balance, to?.token.decimals),
+      diff: formatBalance(
+        (diff / 10n ** 14n) * 10n ** 14n + balance,
+        to?.token.decimals,
+      ),
     });
   };
 
@@ -393,7 +403,7 @@ export const TxOptions = () => {
 
     const value = checks.approvals.find(
       (check) => check.token === zeroAddress,
-    )?.balance;
+    )?.diff;
 
     for (const token of tokenApprovals) {
       const [allowance, decimals] = await publicClient.multicall({
@@ -416,7 +426,7 @@ export const TxOptions = () => {
 
       if (
         allowance >=
-        parseUnits(token.balance.toString().replace(",", "."), decimals)
+        parseUnits(token.diff.toString().replace(",", "."), decimals)
       ) {
         continue;
       }
@@ -427,7 +437,7 @@ export const TxOptions = () => {
         functionName: "approve",
         args: [
           proxy.address,
-          parseUnits(token.balance.toString().replace(",", "."), decimals),
+          parseUnits(token.diff.toString().replace(",", "."), decimals),
         ],
       });
 
@@ -442,30 +452,21 @@ export const TxOptions = () => {
       }
     }
 
-    const [postTransfers, preTransfers, approvals, withdrawals] =
-      await Promise.all([
-        transformToMetadata(checks.postTransfer, publicClient),
-        transformToMetadata(checks.preTransfer, publicClient),
-        transformToMetadata(
-          tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
-          publicClient,
-        ),
-        transformToMetadata(checks.withdrawals, publicClient),
-      ]);
+    const [diffs, approvals, withdrawals] = await Promise.all([
+      transformToMetadata(checks.diffs, publicClient),
+      transformToMetadata(
+        tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
+        publicClient,
+      ),
+      transformToMetadata(checks.withdrawals, publicClient),
+    ]);
 
     try {
       const hash = await writeContractAsync({
         abi: proxy.abi,
         address: proxy.address,
         functionName: "proxyCallMetadataCalldata",
-        args: [
-          postTransfers,
-          preTransfers,
-          approvals,
-          tx.to,
-          data,
-          withdrawals,
-        ],
+        args: [diffs, approvals, tx.to, data, withdrawals],
         value: value
           ? parseUnits(value.toString().replace(",", "."), 18)
           : undefined,
@@ -497,7 +498,9 @@ export const TxOptions = () => {
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription className="flex items-center justify-between">
             <span className="text-sm">
-              {tx ? `Call to ${shortenAddress(tx.to)}` : "Setup your tx options here."}
+              {tx
+                ? `Call to ${shortenAddress(tx.to)}`
+                : "Setup your tx options here."}
             </span>
             <Button variant="outline" onClick={toggleAdvanced}>
               {isAdvanced ? "Hide advanced" : "Show advanced"}
@@ -506,21 +509,6 @@ export const TxOptions = () => {
         </DialogHeader>
         {isAdvanced ? (
           <Accordion type="single" collapsible defaultValue="pre-transfer">
-            <AccordionItem value="pre-transfer">
-              <AccordionTrigger>Pre-transfer</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                {checks.preTransfer.map((check, index) => (
-                  <CheckComp
-                    key={index}
-                    check={check}
-                    onChange={(check) => changePreTransferCheck(index, check)}
-                    onRemove={() => removePreTransferCheck(index)}
-                    index={index}
-                  />
-                ))}
-                <Button onClick={createPreTransferCheck}>Add</Button>
-              </AccordionContent>
-            </AccordionItem>
             <AccordionItem value="approval">
               <AccordionTrigger>Approval</AccordionTrigger>
               <AccordionContent className="flex flex-col gap-2">
@@ -551,32 +539,42 @@ export const TxOptions = () => {
                 <Button onClick={createWithdrawalCheck}>Add</Button>
               </AccordionContent>
             </AccordionItem>
-            <AccordionItem value="post-transfer">
-              <AccordionTrigger>Post-transfer</AccordionTrigger>
+            <AccordionItem value="diffs">
+              <AccordionTrigger>Diffs</AccordionTrigger>
               <AccordionContent className="flex flex-col gap-2">
-                {checks.postTransfer.map((check, index) => (
+                {checks.diffs.map((check, index) => (
                   <CheckComp
                     key={index}
                     check={check}
-                    onChange={(check) => changePostTransferCheck(index, check)}
-                    onRemove={() => removePostTransferCheck(index)}
+                    onChange={(check) => changeDiffsCheck(index, check)}
+                    onRemove={() => removeDiffsCheck(index)}
                     index={index}
                   />
                 ))}
-                <Button onClick={createPostTransferCheck}>Add</Button>
+                <Button onClick={createDiffsCheck}>Add</Button>
               </AccordionContent>
             </AccordionItem>
           </Accordion>
-        ) : <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <Label>You spend:</Label>
-            {checks.approvals.map((check) => (<p key={check.token} className="text-lg font-bold">- {check.balance.toFixed(3)} {check.symbol}</p>))}
+        ) : (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>You spend:</Label>
+              {checks.approvals.map((check) => (
+                <p key={check.token} className="text-lg font-bold">
+                  - {check.diff.toFixed(3)} {check.symbol}
+                </p>
+              ))}
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>You receive:</Label>
+              {checks.withdrawals.map((check) => (
+                <p key={check.token} className="text-lg font-bold">
+                  + {check.diff.toFixed(3)} {check.symbol}
+                </p>
+              ))}
+            </div>
           </div>
-          <div className="flex flex-col gap-2">
-            <Label>You receive:</Label>
-            {checks.withdrawals.map((check) => (<p key={check.token} className="text-lg font-bold">+ {check.balance.toFixed(3)} {check.symbol}</p>))}
-          </div>
-        </div>}
+        )}
 
         <DialogFooter className="flex items-center justify-between">
           <Button variant="outline" onClick={closeModal}>

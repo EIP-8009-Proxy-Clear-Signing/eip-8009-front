@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type Check = {
   token: string;
-  balance: number;
+  diff: number;
   target: string;
   decimals?: number;
   symbol?: string;
@@ -10,62 +10,55 @@ export type Check = {
 
 export type UseChecks = {
   checks: {
-    preTransfer: Check[];
+    diffs: Check[];
     approvals: Check[];
     withdrawals: Check[];
-    postTransfer: Check[];
   };
-  createPreTransferCheck: () => void;
-  changePreTransferCheck: (index: number, check: Check) => void;
-  removePreTransferCheck: (index: number) => void;
+  createDiffsCheck: () => void;
+  changeDiffsCheck: (index: number, check: Check) => void;
+  removeDiffsCheck: (index: number) => void;
   createApprovalCheck: () => void;
   changeApprovalCheck: (index: number, check: Check) => void;
   removeApprovalCheck: (index: number) => void;
   createWithdrawalCheck: () => void;
   changeWithdrawalCheck: (index: number, check: Check) => void;
   removeWithdrawalCheck: (index: number) => void;
-  createPostTransferCheck: () => void;
-  changePostTransferCheck: (index: number, check: Check) => void;
-  removePostTransferCheck: (index: number) => void;
 };
 
 export const useChecks = create<UseChecks>((set) => ({
   checks: {
-    preTransfer: [],
     approvals: [],
     withdrawals: [],
-    postTransfer: [],
+    diffs: [],
   },
-  createPreTransferCheck: () => {
+  createDiffsCheck: () => {
     set((state) => ({
       checks: {
         ...state.checks,
-        preTransfer: [
-          ...state.checks.preTransfer,
+        diffs: [
+          ...state.checks.diffs,
           {
             token: "",
-            balance: 0,
+            diff: 0,
             target: "",
           },
         ],
       },
     }));
   },
-  changePreTransferCheck: (index: number, check: Check) => {
+  changeDiffsCheck: (index: number, check: Check) => {
     set((state) => ({
       checks: {
         ...state.checks,
-        preTransfer: state.checks.preTransfer.map((c, i) =>
-          i === index ? check : c
-        ),
+        diffs: state.checks.diffs.map((c, i) => (i === index ? check : c)),
       },
     }));
   },
-  removePreTransferCheck: (index: number) => {
+  removeDiffsCheck: (index: number) => {
     set((state) => ({
       checks: {
         ...state.checks,
-        preTransfer: state.checks.preTransfer.filter((_, i) => i !== index),
+        diffs: state.checks.diffs.filter((_, i) => i !== index),
       },
     }));
   },
@@ -77,7 +70,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.approvals,
           {
             token: "",
-            balance: 0,
+            diff: 0,
             target: "",
           },
         ],
@@ -89,7 +82,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         approvals: state.checks.approvals.map((c, i) =>
-          i === index ? check : c
+          i === index ? check : c,
         ),
       },
     }));
@@ -110,7 +103,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.withdrawals,
           {
             token: "",
-            balance: 0,
+            diff: 0,
             target: "",
           },
         ],
@@ -122,7 +115,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         withdrawals: state.checks.withdrawals.map((c, i) =>
-          i === index ? check : c
+          i === index ? check : c,
         ),
       },
     }));
@@ -132,39 +125,6 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         withdrawals: state.checks.withdrawals.filter((_, i) => i !== index),
-      },
-    }));
-  },
-  createPostTransferCheck: () => {
-    set((state) => ({
-      checks: {
-        ...state.checks,
-        postTransfer: [
-          ...state.checks.postTransfer,
-          {
-            token: "",
-            balance: 0,
-            target: "",
-          },
-        ],
-      },
-    }));
-  },
-  changePostTransferCheck: (index: number, check: Check) => {
-    set((state) => ({
-      checks: {
-        ...state.checks,
-        postTransfer: state.checks.postTransfer.map((c, i) =>
-          i === index ? check : c
-        ),
-      },
-    }));
-  },
-  removePostTransferCheck: (index: number) => {
-    set((state) => ({
-      checks: {
-        ...state.checks,
-        postTransfer: state.checks.postTransfer.filter((_, i) => i !== index),
       },
     }));
   },
