@@ -2,7 +2,7 @@ import { create } from "zustand";
 
 export type Check = {
   token: string;
-  diff: number;
+  balance: number;
   target: string;
   decimals?: number;
   symbol?: string;
@@ -39,7 +39,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.diffs,
           {
             token: "",
-            diff: 0,
+            balance: 0,
             target: "",
           },
         ],
@@ -70,7 +70,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.approvals,
           {
             token: "",
-            diff: 0,
+            balance: 0,
             target: "",
           },
         ],
@@ -103,7 +103,7 @@ export const useChecks = create<UseChecks>((set) => ({
           ...state.checks.withdrawals,
           {
             token: "",
-            diff: 0,
+            balance: 0,
             target: "",
           },
         ],
