@@ -79,7 +79,7 @@ const createCheckComp =
       if (isNaN(number)) {
         return;
       }
-      onChange({ ...check, diff: number });
+      onChange({ ...check, balance: number });
     };
 
     return (
@@ -112,7 +112,7 @@ const createCheckComp =
           <div className="flex flex-col gap-1">
             <Label>Minimum balance:</Label>
             <Input
-              value={check.diff}
+              value={check.balance}
               type="number"
               onChange={onBalanceChange}
             />
@@ -161,8 +161,8 @@ const transformToMetadata = async (
     balance: {
       target: balance.target as `0x${string}`,
       token: balance.token as `0x${string}`,
-      diff: parseUnits(
-        balance.diff.toString().replace(",", "."),
+      balance: parseUnits(
+        balance.balance.toString().replace(",", "."),
         checksDecimals[index],
       ),
     },
@@ -175,7 +175,7 @@ const transformToMetadata = async (
       balance: {
         target: ether.target as `0x${string}`,
         token: zeroAddress,
-        diff: parseUnits(ether.diff.toString().replace(",", "."), 18),
+        balance: parseUnits(ether.balance.toString().replace(",", "."), 18),
       },
       symbol: "ETH",
       decimals: 18,
@@ -283,7 +283,7 @@ export const TxOptions = () => {
     changeApprovalCheck(0, {
       target: tx.to,
       token: formatToken(from?.token.symbol, from?.token.address),
-      diff: formatBalance(from?.value.diff, from?.token.decimals),
+      balance: formatBalance(from?.value.diff, from?.token.decimals),
       symbol: appSymbol,
       decimals: appDecimals,
     });
@@ -314,33 +314,36 @@ export const TxOptions = () => {
     changeWithdrawalCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
-      diff: formatBalance(to?.value.diff, to?.token.decimals),
+      balance:
+        formatBalance(to?.value.diff, to?.token.decimals) -
+        0.000_000_000_000_999_9,
       symbol: withSymbol,
       decimals: withDecimals,
     });
 
-    let balance = 0n;
+    // todo refactor
 
-    try {
-      balance = await publicClient.readContract({
-        abi: erc20Abi,
-        address: to?.token.address as `0x${string}`,
-        functionName: "balanceOf",
-        args: [address as `0x${string}`],
-      });
-    } catch (error) {
-      console.error(error);
-    }
+    // let balance = 0n;
 
-    const diff = to?.value.diff ?? 0n;
+    // try {
+    //   balance = await publicClient.readContract({
+    //     abi: erc20Abi,
+    //     address: to?.token.address as `0x${string}`,
+    //     functionName: "balanceOf",
+    //     args: [address as `0x${string}`],
+    //   });
+    // } catch (error) {
+    //   console.error(error);
+    // }
+
+    // const diff = to?.value.diff ?? 0n;
 
     changeDiffsCheck(0, {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
-      diff: formatBalance(
-        (diff / 10n ** 14n) * 10n ** 14n + balance,
-        to?.token.decimals,
-      ),
+      balance:
+        formatBalance(to?.value.diff, to?.token.decimals) -
+        0.000_000_000_000_999_9,
     });
   };
 
@@ -403,7 +406,7 @@ export const TxOptions = () => {
 
     const value = checks.approvals.find(
       (check) => check.token === zeroAddress,
-    )?.diff;
+    )?.balance;
 
     for (const token of tokenApprovals) {
       const [allowance, decimals] = await publicClient.multicall({
@@ -426,7 +429,7 @@ export const TxOptions = () => {
 
       if (
         allowance >=
-        parseUnits(token.diff.toString().replace(",", "."), decimals)
+        parseUnits(token.balance.toString().replace(",", "."), decimals)
       ) {
         continue;
       }
@@ -437,7 +440,7 @@ export const TxOptions = () => {
         functionName: "approve",
         args: [
           proxy.address,
-          parseUnits(token.diff.toString().replace(",", "."), decimals),
+          parseUnits(token.balance.toString().replace(",", "."), decimals),
         ],
       });
 
@@ -465,7 +468,7 @@ export const TxOptions = () => {
       const hash = await writeContractAsync({
         abi: proxy.abi,
         address: proxy.address,
-        functionName: "proxyCallMetadataCalldata",
+        functionName: "proxyCallMetadataCalldataDiffs",
         args: [diffs, approvals, tx.to, data, withdrawals],
         value: value
           ? parseUnits(value.toString().replace(",", "."), 18)
@@ -561,7 +564,7 @@ export const TxOptions = () => {
               <Label>You spend:</Label>
               {checks.approvals.map((check) => (
                 <p key={check.token} className="text-lg font-bold">
-                  - {check.diff.toFixed(3)} {check.symbol}
+                  - {check.balance.toFixed(3)} {check.symbol}
                 </p>
               ))}
             </div>
@@ -569,7 +572,7 @@ export const TxOptions = () => {
               <Label>You receive:</Label>
               {checks.withdrawals.map((check) => (
                 <p key={check.token} className="text-lg font-bold">
-                  + {check.diff.toFixed(3)} {check.symbol}
+                  + {check.balance.toFixed(3)} {check.symbol}
                 </p>
               ))}
             </div>
