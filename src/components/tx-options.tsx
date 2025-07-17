@@ -252,6 +252,7 @@ export const TxOptions = () => {
 
     if (!checks.diffs.length) {
       createDiffsCheck();
+      createDiffsCheck();
     }
 
     let appSymbol = "ETH";
@@ -344,6 +345,15 @@ export const TxOptions = () => {
       balance:
         formatBalance(to?.value.diff, to?.token.decimals) -
         0.000_000_000_000_999_9,
+    });
+
+    changeDiffsCheck(1, {
+      target: String(address),
+      token: formatToken(from?.token.symbol, from?.token.address),
+      balance: -(
+        formatBalance(from?.value.diff, from?.token.decimals) +
+        0.000_000_000_000_999_9
+      ),
     });
   };
 
