@@ -532,7 +532,7 @@ const proxyAbi = [
 export const contracts = {
   [sepolia.id]: {
     proxy: {
-      address: "0xB295a06575A1B3E5AFb60a380a15E6Cca416f282" as const,
+      address: "0x24a0BFCE1f30c614edE386e07e64DcCba5fabD5A" as const,
       abi: proxyAbi,
     },
   },
