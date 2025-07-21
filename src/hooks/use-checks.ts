@@ -8,12 +8,21 @@ export type Check = {
   symbol?: string;
 };
 
+export enum EMode {
+  "diifs" = "diifs",
+  "pre/post" = "pre/post",
+}
+
 export type UseChecks = {
   checks: {
     diffs: Check[];
     approvals: Check[];
     withdrawals: Check[];
+    preTransfer: Check[];
+    postTransfer: Check[];
   };
+  slippage: number;
+  setSlippage: (slippage: number) => void;
   createDiffsCheck: () => void;
   changeDiffsCheck: (index: number, check: Check) => void;
   removeDiffsCheck: (index: number) => void;
@@ -23,13 +32,46 @@ export type UseChecks = {
   createWithdrawalCheck: () => void;
   changeWithdrawalCheck: (index: number, check: Check) => void;
   removeWithdrawalCheck: (index: number) => void;
+
+  createPreTransferCheck: () => void;
+  changePreTransferCheck: (index: number, check: Check) => void;
+  removePreTransferCheck: (index: number) => void;
+
+  createPostTransferCheck: () => void;
+  changePostTransferCheck: (index: number, check: Check) => void;
+  removePostTransferCheck: (index: number) => void;
+
+  mode: EMode;
+  setMode: (mode: EMode) => void;
 };
 
+export const MIN_SLIPPAGE = 0;
+export const MAX_SLIPPAGE = 30;
+
 export const useChecks = create<UseChecks>((set) => ({
+  mode: EMode.diifs,
   checks: {
+    preTransfer: [],
+    postTransfer: [],
     approvals: [],
     withdrawals: [],
     diffs: [],
+  },
+  slippage: 0.0001,
+  setMode: (mode: EMode) =>
+    set(() => ({
+      mode,
+    })),
+  setSlippage: (slippage) => {
+    if (slippage >= MIN_SLIPPAGE && MAX_SLIPPAGE >= slippage) {
+      return set(() => ({ slippage }));
+    } else {
+      if (slippage < MIN_SLIPPAGE) {
+        return set(() => ({ slippage: MIN_SLIPPAGE }));
+      } else if (MAX_SLIPPAGE < slippage) {
+        return set(() => ({ slippage: MAX_SLIPPAGE }));
+      }
+    }
   },
   createDiffsCheck: () => {
     set((state) => ({
@@ -125,6 +167,74 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         withdrawals: state.checks.withdrawals.filter((_, i) => i !== index),
+      },
+    }));
+  },
+
+  createPostTransferCheck: () => {
+    set((state) => ({
+      checks: {
+        ...state.checks,
+        postTransfer: [
+          ...state.checks.postTransfer,
+          {
+            token: "",
+            balance: 0,
+            target: "",
+          },
+        ],
+      },
+    }));
+  },
+  changePostTransferCheck: (index: number, check: Check) => {
+    set((state) => ({
+      checks: {
+        ...state.checks,
+        postTransfer: state.checks.postTransfer.map((c, i) =>
+          i === index ? check : c,
+        ),
+      },
+    }));
+  },
+  removePostTransferCheck: (index: number) => {
+    set((state) => ({
+      checks: {
+        ...state.checks,
+        postTransfer: state.checks.postTransfer.filter((_, i) => i !== index),
+      },
+    }));
+  },
+
+  createPreTransferCheck: () => {
+    set((state) => ({
+      checks: {
+        ...state.checks,
+        preTransfer: [
+          ...state.checks.preTransfer,
+          {
+            token: "",
+            balance: 0,
+            target: "",
+          },
+        ],
+      },
+    }));
+  },
+  changePreTransferCheck: (index: number, check: Check) => {
+    set((state) => ({
+      checks: {
+        ...state.checks,
+        preTransfer: state.checks.preTransfer.map((c, i) =>
+          i === index ? check : c,
+        ),
+      },
+    }));
+  },
+  removePreTransferCheck: (index: number) => {
+    set((state) => ({
+      checks: {
+        ...state.checks,
+        preTransfer: state.checks.preTransfer.filter((_, i) => i !== index),
       },
     }));
   },
