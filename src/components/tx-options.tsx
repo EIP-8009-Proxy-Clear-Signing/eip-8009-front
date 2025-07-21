@@ -1,18 +1,24 @@
 import { useModalPromise } from "@/hooks/use-modal-promise";
 import {
   Dialog,
-  DialogTitle,
   DialogContent,
-  DialogHeader,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "./ui/dialog";
 import { Label } from "./ui/label";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Input } from "./ui/input";
 import { Loader2, X } from "lucide-react";
-import { Check, useChecks } from "@/hooks/use-checks";
+import {
+  Check,
+  EMode,
+  MAX_SLIPPAGE,
+  MIN_SLIPPAGE,
+  useChecks,
+} from "@/hooks/use-checks";
 import {
   Accordion,
   AccordionContent,
@@ -38,8 +44,14 @@ import {
   zeroAddress,
 } from "viem";
 import { whatsabi } from "@shazow/whatsabi";
-import { useEffect, useState } from "react";
-import { formatBalance, formatToken, shortenAddress } from "@/lib/utils.ts";
+import { ChangeEvent, useCallback, useEffect, useState } from "react";
+import {
+  formatBalance,
+  formatToken,
+  getEnumValues,
+  shortenAddress,
+} from "@/lib/utils.ts";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -187,6 +199,7 @@ const transformToMetadata = async (
 
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
+
   const {
     modalOpen,
     closeModal,
@@ -201,7 +214,11 @@ export const TxOptions = () => {
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const {
+    mode,
+    setMode,
     checks,
+    slippage,
+    setSlippage,
     createApprovalCheck,
     changeApprovalCheck,
     removeApprovalCheck,
@@ -211,7 +228,15 @@ export const TxOptions = () => {
     createDiffsCheck,
     changeDiffsCheck,
     removeDiffsCheck,
+    createPreTransferCheck,
+    changePreTransferCheck,
+    removePreTransferCheck,
+    removePostTransferCheck,
+    changePostTransferCheck,
+    createPostTransferCheck,
   } = useChecks();
+
+  const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
 
   const setDataToForm = async () => {
     if (!publicClient || tx === null) return;
@@ -250,9 +275,21 @@ export const TxOptions = () => {
       createWithdrawalCheck();
     }
 
-    if (!checks.diffs.length) {
-      createDiffsCheck();
-      createDiffsCheck();
+    switch (mode) {
+      case "diifs": {
+        if (!checks.diffs.length) {
+          createDiffsCheck();
+          createDiffsCheck();
+        }
+        break;
+      }
+
+      case EMode["pre/post"]: {
+        if (!checks.postTransfer.length) {
+          createPostTransferCheck();
+        }
+        break;
+      }
     }
 
     let appSymbol = "ETH";
@@ -316,50 +353,67 @@ export const TxOptions = () => {
       target: String(address),
       token: formatToken(to?.token.symbol, to?.token.address),
       balance:
-        formatBalance(to?.value.diff, to?.token.decimals) -
-        0.000_000_000_000_999_9,
+        formatBalance(to?.value.diff, to?.token.decimals) *
+        (1 - slippage / 100),
       symbol: withSymbol,
       decimals: withDecimals,
     });
 
-    // todo refactor
+    switch (mode) {
+      case EMode.diifs: {
+        changeDiffsCheck(0, {
+          target: String(address),
+          token: formatToken(to?.token.symbol, to?.token.address),
+          balance:
+            formatBalance(to?.value.diff, to?.token.decimals) *
+            (1 - slippage / 100),
+        });
 
-    // let balance = 0n;
+        changeDiffsCheck(1, {
+          target: String(address),
+          token: formatToken(from?.token.symbol, from?.token.address),
+          balance: -(
+            formatBalance(from?.value.diff, from?.token.decimals) *
+            (1 + slippage / 100)
+          ),
+        });
 
-    // try {
-    //   balance = await publicClient.readContract({
-    //     abi: erc20Abi,
-    //     address: to?.token.address as `0x${string}`,
-    //     functionName: "balanceOf",
-    //     args: [address as `0x${string}`],
-    //   });
-    // } catch (error) {
-    //   console.error(error);
-    // }
+        break;
+      }
 
-    // const diff = to?.value.diff ?? 0n;
+      case EMode["pre/post"]: {
+        let balance = 0n;
 
-    changeDiffsCheck(0, {
-      target: String(address),
-      token: formatToken(to?.token.symbol, to?.token.address),
-      balance:
-        formatBalance(to?.value.diff, to?.token.decimals) -
-        0.000_000_000_000_999_9,
-    });
+        try {
+          balance = await publicClient.readContract({
+            abi: erc20Abi,
+            address: to?.token.address as `0x${string}`,
+            functionName: "balanceOf",
+            args: [address as `0x${string}`],
+          });
+        } catch (error) {
+          console.error(error);
+        }
 
-    changeDiffsCheck(1, {
-      target: String(address),
-      token: formatToken(from?.token.symbol, from?.token.address),
-      balance: -(
-        formatBalance(from?.value.diff, from?.token.decimals) +
-        0.000_000_000_000_999_9
-      ),
-    });
+        changePostTransferCheck(0, {
+          target: String(address),
+          token: formatToken(to?.token.symbol, to?.token.address),
+          balance: formatBalance(
+            BigInt(
+              Number((to?.value.diff ?? 0n) + balance) * (1 - slippage / 100),
+            ),
+            to?.token.decimals,
+          ),
+        });
+
+        break;
+      }
+    }
   };
 
   useEffect(() => {
     setDataToForm();
-  }, [tx, address]);
+  }, [tx, address, slippage, mode]);
 
   const handleSave = async () => {
     setIsLoading(true);
@@ -465,27 +519,59 @@ export const TxOptions = () => {
       }
     }
 
-    const [diffs, approvals, withdrawals] = await Promise.all([
-      transformToMetadata(checks.diffs, publicClient),
-      transformToMetadata(
-        tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
-        publicClient,
-      ),
-      transformToMetadata(checks.withdrawals, publicClient),
-    ]);
+    const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
+      await Promise.all([
+        transformToMetadata(checks.postTransfer, publicClient),
+        transformToMetadata(checks.preTransfer, publicClient),
+
+        transformToMetadata(checks.diffs, publicClient),
+        transformToMetadata(
+          tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
+          publicClient,
+        ),
+        transformToMetadata(checks.withdrawals, publicClient),
+      ]);
 
     try {
-      const hash = await writeContractAsync({
-        abi: proxy.abi,
-        address: proxy.address,
-        functionName: "proxyCallMetadataCalldataDiffs",
-        args: [diffs, approvals, tx.to, data, withdrawals],
-        value: value
-          ? parseUnits(value.toString().replace(",", "."), 18)
-          : undefined,
-      });
+      switch (mode) {
+        case EMode.diifs: {
+          const hash = await writeContractAsync({
+            abi: proxy.abi,
+            address: proxy.address,
+            functionName: "proxyCallMetadataCalldataDiffs",
+            args: [diffs, approvals, tx.to, data, withdrawals],
+            value: value
+              ? parseUnits(value.toString().replace(",", "."), 18)
+              : undefined,
+          });
 
-      resolve(hash);
+          resolve(hash);
+          break;
+        }
+
+        case EMode["pre/post"]: {
+          const hash = await writeContractAsync({
+            abi: proxy.abi,
+            address: proxy.address,
+            functionName: "proxyCallMetadataCalldata",
+            args: [
+              postTransfers,
+              preTransfers,
+              approvals,
+              tx.to,
+              data,
+              withdrawals,
+            ],
+            value: value
+              ? parseUnits(value.toString().replace(",", "."), 18)
+              : undefined,
+          });
+
+          resolve(hash);
+          break;
+        }
+      }
+
       hideModal();
     } catch (error) {
       console.error(error);
@@ -494,6 +580,28 @@ export const TxOptions = () => {
       setIsLoading(false);
     }
   };
+
+  const clamp = useCallback(
+    (n: number) => Math.min(Math.max(n, MIN_SLIPPAGE), MAX_SLIPPAGE),
+    [],
+  );
+
+  const handleChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    if (v === "" || /^\d*\.?\d*$/.test(v)) {
+      setInputSlippage(v);
+    }
+  }, []);
+
+  const handleBlur = useCallback(() => {
+    if (inputSlippage === "") {
+      setInputSlippage(slippage.toString());
+      return;
+    }
+    const num = clamp(parseFloat(inputSlippage));
+    setSlippage(num);
+    setInputSlippage(num.toString());
+  }, [inputSlippage, slippage, setSlippage, clamp]);
 
   if (!modalOpen) return null;
 
@@ -520,54 +628,119 @@ export const TxOptions = () => {
             </Button>
           </DialogDescription>
         </DialogHeader>
+
         {isAdvanced ? (
-          <Accordion type="single" collapsible defaultValue="pre-transfer">
-            <AccordionItem value="approval">
-              <AccordionTrigger>Approval</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                {checks.approvals.map((check, index) => (
-                  <ApprovalComp
-                    key={index}
-                    check={check}
-                    onChange={(check) => changeApprovalCheck(index, check)}
-                    onRemove={() => removeApprovalCheck(index)}
-                    index={index}
-                  />
-                ))}
-                <Button onClick={createApprovalCheck}>Add</Button>
-              </AccordionContent>
-            </AccordionItem>
-            <AccordionItem value="withdrawal">
-              <AccordionTrigger>Withdrawal</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                {checks.withdrawals.map((check, index) => (
-                  <WithdrawalComp
-                    key={index}
-                    check={check}
-                    onChange={(check) => changeWithdrawalCheck(index, check)}
-                    onRemove={() => removeWithdrawalCheck(index)}
-                    index={index}
-                  />
-                ))}
-                <Button onClick={createWithdrawalCheck}>Add</Button>
-              </AccordionContent>
-            </AccordionItem>
-            <AccordionItem value="diffs">
-              <AccordionTrigger>Diffs</AccordionTrigger>
-              <AccordionContent className="flex flex-col gap-2">
-                {checks.diffs.map((check, index) => (
-                  <CheckComp
-                    key={index}
-                    check={check}
-                    onChange={(check) => changeDiffsCheck(index, check)}
-                    onRemove={() => removeDiffsCheck(index)}
-                    index={index}
-                  />
-                ))}
-                <Button onClick={createDiffsCheck}>Add</Button>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
+          <>
+            <Tabs value={mode}>
+              <TabsList defaultValue={EMode.diifs} className="w-full">
+                {getEnumValues(EMode).map((mode) => {
+                  return (
+                    <TabsTrigger value={mode} onClick={() => setMode(mode)}>
+                      {mode}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+            </Tabs>
+            {mode === EMode.diifs && (
+              <>
+                <Label htmlFor="Slippage">Slippage</Label>
+                <Input
+                  value={inputSlippage}
+                  onChange={handleChange}
+                  onBlur={handleBlur}
+                  placeholder="Slippage"
+                />
+              </>
+            )}
+            <Accordion type="single" collapsible defaultValue="pre-transfer">
+              <AccordionItem value="approval">
+                <AccordionTrigger>Approval</AccordionTrigger>
+                <AccordionContent className="flex flex-col gap-2">
+                  {checks.approvals.map((check, index) => (
+                    <ApprovalComp
+                      key={index}
+                      check={check}
+                      onChange={(check) => changeApprovalCheck(index, check)}
+                      onRemove={() => removeApprovalCheck(index)}
+                      index={index}
+                    />
+                  ))}
+                  <Button onClick={createApprovalCheck}>Add</Button>
+                </AccordionContent>
+              </AccordionItem>
+              <AccordionItem value="withdrawal">
+                <AccordionTrigger>Withdrawal</AccordionTrigger>
+                <AccordionContent className="flex flex-col gap-2">
+                  {checks.withdrawals.map((check, index) => (
+                    <WithdrawalComp
+                      key={index}
+                      check={check}
+                      onChange={(check) => changeWithdrawalCheck(index, check)}
+                      onRemove={() => removeWithdrawalCheck(index)}
+                      index={index}
+                    />
+                  ))}
+                  <Button onClick={createWithdrawalCheck}>Add</Button>
+                </AccordionContent>
+              </AccordionItem>
+              {mode === EMode.diifs && (
+                <AccordionItem value="diffs">
+                  <AccordionTrigger>Diffs</AccordionTrigger>
+                  <AccordionContent className="flex flex-col gap-2">
+                    {checks.diffs.map((check, index) => (
+                      <CheckComp
+                        key={index}
+                        check={check}
+                        onChange={(check) => changeDiffsCheck(index, check)}
+                        onRemove={() => removeDiffsCheck(index)}
+                        index={index}
+                      />
+                    ))}
+                    <Button onClick={createDiffsCheck}>Add</Button>
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+              {mode === EMode["pre/post"] && (
+                <>
+                  <AccordionItem value="pre-transfer">
+                    <AccordionTrigger>Pre-transfer</AccordionTrigger>
+                    <AccordionContent className="flex flex-col gap-2">
+                      {checks.preTransfer.map((check, index) => (
+                        <CheckComp
+                          key={index}
+                          check={check}
+                          onChange={(check) =>
+                            changePreTransferCheck(index, check)
+                          }
+                          onRemove={() => removePreTransferCheck(index)}
+                          index={index}
+                        />
+                      ))}
+                      <Button onClick={createPreTransferCheck}>Add</Button>
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="post-transfer">
+                    <AccordionTrigger>Post-transfer</AccordionTrigger>
+                    <AccordionContent className="flex flex-col gap-2">
+                      {checks.postTransfer.map((check, index) => (
+                        <CheckComp
+                          key={index}
+                          check={check}
+                          onChange={(check) =>
+                            changePostTransferCheck(index, check)
+                          }
+                          onRemove={() => removePostTransferCheck(index)}
+                          index={index}
+                        />
+                      ))}
+                      <Button onClick={createPostTransferCheck}>Add</Button>
+                    </AccordionContent>
+                  </AccordionItem>
+                </>
+              )}
+            </Accordion>
+          </>
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
