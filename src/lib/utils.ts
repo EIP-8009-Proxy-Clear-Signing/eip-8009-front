@@ -21,3 +21,19 @@ export const formatBalance = (
 export const shortenAddress = (address: string) => {
   return address.slice(0, 6) + "..." + address.slice(-4);
 };
+
+function getEnumKeys<E extends object>(
+  enm: E,
+): Array<Extract<keyof E, string>> {
+  return Object.keys(enm)
+    .filter((k) => isNaN(+k))
+    .map((k) => k as Extract<keyof E, string>);
+}
+
+export function getEnumValues<E>(enm: { [k: string]: E }): E[] {
+  return getEnumKeys(enm).map((k) => enm[k]);
+}
+
+export function getEnumEntries<E>(enm: { [k: string]: E }): [keyof E, E][] {
+  return getEnumKeys(enm).map((k) => [k, enm[k]] as [keyof E, E]);
+}
