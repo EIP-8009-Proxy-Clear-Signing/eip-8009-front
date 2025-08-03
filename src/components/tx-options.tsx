@@ -49,9 +49,12 @@ import {
   formatBalance,
   formatToken,
   getEnumValues,
+  getExplorerUrl,
   shortenAddress,
+  waitForTx,
 } from "@/lib/utils.ts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
+import { toast } from "sonner";
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -382,26 +385,11 @@ export const TxOptions = () => {
       }
 
       case EMode["pre/post"]: {
-        let balance = 0n;
-
-        try {
-          balance = await publicClient.readContract({
-            abi: erc20Abi,
-            address: to?.token.address as `0x${string}`,
-            functionName: "balanceOf",
-            args: [address as `0x${string}`],
-          });
-        } catch (error) {
-          console.error(error);
-        }
-
         changePostTransferCheck(0, {
           target: String(address),
           token: formatToken(to?.token.symbol, to?.token.address),
           balance: formatBalance(
-            BigInt(
-              Number((to?.value.diff ?? 0n) + balance) * (1 - slippage / 100),
-            ),
+            BigInt(Number(to?.value.post || 0n) * (1 - slippage / 100)),
             to?.token.decimals,
           ),
         });
@@ -533,9 +521,11 @@ export const TxOptions = () => {
       ]);
 
     try {
+      let hash: `0x${string}` = "0x";
+
       switch (mode) {
         case EMode.diifs: {
-          const hash = await writeContractAsync({
+          hash = await writeContractAsync({
             abi: proxy.abi,
             address: proxy.address,
             functionName: "proxyCallMetadataCalldataDiffs",
@@ -545,12 +535,11 @@ export const TxOptions = () => {
               : undefined,
           });
 
-          resolve(hash);
           break;
         }
 
         case EMode["pre/post"]: {
-          const hash = await writeContractAsync({
+          hash = await writeContractAsync({
             abi: proxy.abi,
             address: proxy.address,
             functionName: "proxyCallMetadataCalldata",
@@ -567,10 +556,30 @@ export const TxOptions = () => {
               : undefined,
           });
 
-          resolve(hash);
           break;
         }
       }
+
+      const txData = await waitForTx(publicClient, hash, 1);
+
+      if (txData?.status === "success") {
+        toast.success("Transaction sent successfully!", {
+          duration: 7_000,
+          action: {
+            label: "Open in Explorer",
+            onClick: () =>
+              window.open(
+                `${getExplorerUrl(chainId)}/tx/${hash}`,
+                "_blank",
+                "noopener,noreferrer",
+              ),
+          },
+        });
+      } else {
+        toast.error("Transaction sent unsuccessfully!");
+      }
+
+      resolve(hash);
 
       hideModal();
     } catch (error) {
@@ -642,17 +651,13 @@ export const TxOptions = () => {
                 })}
               </TabsList>
             </Tabs>
-            {mode === EMode.diifs && (
-              <>
-                <Label htmlFor="Slippage">Slippage</Label>
-                <Input
-                  value={inputSlippage}
-                  onChange={handleChange}
-                  onBlur={handleBlur}
-                  placeholder="Slippage"
-                />
-              </>
-            )}
+            <Label htmlFor="Slippage">Slippage</Label>
+            <Input
+              value={inputSlippage}
+              onChange={handleChange}
+              onBlur={handleBlur}
+              placeholder="Slippage"
+            />
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>
