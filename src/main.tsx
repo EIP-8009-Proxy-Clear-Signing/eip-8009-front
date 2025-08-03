@@ -16,7 +16,7 @@ createRoot(document.getElementById("root")!).render(
       <WagmiProvider config={wagmiConfig}>
         <QueryClientProvider client={queryClient}>
           <App />
-          <Toaster />
+          <Toaster richColors />
         </QueryClientProvider>
       </WagmiProvider>
     </ThemeProvider>
