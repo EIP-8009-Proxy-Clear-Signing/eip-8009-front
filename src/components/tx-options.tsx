@@ -565,6 +565,8 @@ export const TxOptions = () => {
       if (txData?.status === "success") {
         toast.success("Transaction sent successfully!", {
           duration: 7_000,
+          position: "top-center",
+          closeButton: true,
           action: {
             label: "Open in Explorer",
             onClick: () =>
