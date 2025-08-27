@@ -55,6 +55,7 @@ import {
 } from "@/lib/utils.ts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
 import { toast } from "sonner";
+import { useSafeApp } from "@/providers/safe-app-provider.tsx";
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -216,6 +217,8 @@ export const TxOptions = () => {
   const chainId = useChainId();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const { safeInfo, safe } = useSafeApp();
+
   const {
     mode,
     setMode,
@@ -486,24 +489,70 @@ export const TxOptions = () => {
         continue;
       }
 
-      const hash = await writeContractAsync({
-        abi: erc20Abi,
-        address: token.token as `0x${string}`,
-        functionName: "approve",
-        args: [
-          proxy.address,
-          parseUnits(token.balance.toString().replace(",", "."), decimals),
-        ],
-      });
+      if (safe && safeInfo) {
+        try {
+          const approvalTx = {
+            to: token.token as `0x${string}`,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [
+                proxy.address,
+                parseUnits(
+                  token.balance.toString().replace(",", "."),
+                  decimals,
+                ),
+              ],
+            }),
+            value: 0n,
+          };
 
-      try {
-        const receipt = await publicClient.waitForTransactionReceipt({
-          hash,
+          const result = await safe.txs.send({
+            txs: [approvalTx],
+          });
+
+          console.log("Safe approval hash", result.safeTxHash);
+
+          toast.success("Approval sent to Safe for signing!", {
+            duration: 7_000,
+            position: "top-center",
+            closeButton: true,
+            action: {
+              label: "View in Safe",
+              onClick: () =>
+                window.open(
+                  `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                ),
+            },
+          });
+        } catch (error) {
+          console.error("Safe approval failed:", error);
+          toast.error("Safe approval failed!");
+          setIsLoading(false);
+          return;
+        }
+      } else {
+        const hash = await writeContractAsync({
+          abi: erc20Abi,
+          address: token.token as `0x${string}`,
+          functionName: "approve",
+          args: [
+            proxy.address,
+            parseUnits(token.balance.toString().replace(",", "."), decimals),
+          ],
         });
 
-        console.log("token approval hash", hash, receipt);
-      } catch (error) {
-        console.error(error);
+        try {
+          const receipt = await publicClient.waitForTransactionReceipt({
+            hash,
+          });
+
+          console.log("token approval hash", hash, receipt);
+        } catch (error) {
+          console.error(error);
+        }
       }
     }
 
@@ -523,69 +572,126 @@ export const TxOptions = () => {
     try {
       let hash: `0x${string}` = "0x";
 
-      switch (mode) {
-        case EMode.diifs: {
-          hash = await writeContractAsync({
-            abi: proxy.abi,
-            address: proxy.address,
-            functionName: "proxyCallMetadataCalldataDiffs",
-            args: [diffs, approvals, tx.to, data, withdrawals],
-            value: value
-              ? parseUnits(value.toString().replace(",", "."), 18)
-              : undefined,
-          });
+      if (safe && safeInfo) {
+        const mainTx = {
+          to: proxy.address,
+          data: (() => {
+            switch (mode) {
+              case EMode.diifs: {
+                return encodeFunctionData({
+                  abi: proxy.abi,
+                  functionName: "proxyCallMetadataCalldataDiffs",
+                  args: [diffs, approvals, tx.to, data, withdrawals],
+                });
+              }
+              case EMode["pre/post"]: {
+                return encodeFunctionData({
+                  abi: proxy.abi,
+                  functionName: "proxyCallMetadataCalldata",
+                  args: [
+                    postTransfers,
+                    preTransfers,
+                    approvals,
+                    tx.to,
+                    data,
+                    withdrawals,
+                  ],
+                });
+              }
+              default:
+                return "0x";
+            }
+          })(),
+          value: value
+            ? parseUnits(value.toString().replace(",", "."), 18)
+            : 0n,
+        };
 
-          break;
-        }
+        const result = await safe.txs.send({
+          txs: [mainTx],
+        });
 
-        case EMode["pre/post"]: {
-          hash = await writeContractAsync({
-            abi: proxy.abi,
-            address: proxy.address,
-            functionName: "proxyCallMetadataCalldata",
-            args: [
-              postTransfers,
-              preTransfers,
-              approvals,
-              tx.to,
-              data,
-              withdrawals,
-            ],
-            value: value
-              ? parseUnits(value.toString().replace(",", "."), 18)
-              : undefined,
-          });
+        hash = result.safeTxHash as `0x${string}`;
 
-          break;
-        }
-      }
-
-      const txData = await waitForTx(publicClient, hash, 1);
-
-      if (txData?.status === "success") {
-        toast.success("Transaction sent successfully!", {
+        toast.success("Transaction sent to Safe for signing!", {
           duration: 7_000,
           position: "top-center",
           closeButton: true,
           action: {
-            label: "Open in Explorer",
+            label: "View in Safe",
             onClick: () =>
               window.open(
-                `${getExplorerUrl(chainId)}/tx/${hash}`,
+                `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
                 "_blank",
                 "noopener,noreferrer",
               ),
           },
         });
       } else {
-        toast.error("Transaction sent unsuccessfully!");
+        switch (mode) {
+          case EMode.diifs: {
+            hash = await writeContractAsync({
+              abi: proxy.abi,
+              address: proxy.address,
+              functionName: "proxyCallMetadataCalldataDiffs",
+              args: [diffs, approvals, tx.to, data, withdrawals],
+              value: value
+                ? parseUnits(value.toString().replace(",", "."), 18)
+                : undefined,
+            });
+
+            break;
+          }
+
+          case EMode["pre/post"]: {
+            hash = await writeContractAsync({
+              abi: proxy.abi,
+              address: proxy.address,
+              functionName: "proxyCallMetadataCalldata",
+              args: [
+                postTransfers,
+                preTransfers,
+                approvals,
+                tx.to,
+                data,
+                withdrawals,
+              ],
+              value: value
+                ? parseUnits(value.toString().replace(",", "."), 18)
+                : undefined,
+            });
+
+            break;
+          }
+        }
+
+        const txData = await waitForTx(publicClient, hash, 1);
+
+        if (txData?.status === "success") {
+          toast.success("Transaction sent successfully!", {
+            duration: 7_000,
+            position: "top-center",
+            closeButton: true,
+            action: {
+              label: "Open in Explorer",
+              onClick: () =>
+                window.open(
+                  `${getExplorerUrl(chainId)}/tx/${hash}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                ),
+            },
+          });
+        } else {
+          toast.error("Transaction sent unsuccessfully!");
+        }
       }
 
       resolve(hash);
-
       hideModal();
     } catch (error) {
       console.error(error);
+      toast.error("Transaction failed!");
       closeModal();
     } finally {
       setIsLoading(false);
