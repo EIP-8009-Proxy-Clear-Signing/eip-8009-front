@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input.tsx";
 import { useModalPromise } from "@/hooks/use-modal-promise";
 import { useDebounce } from "use-debounce";
+import { useSafeApp } from "@/providers/safe-app-provider";
 
 const IFRAME_SANDBOX_ALLOWED_FEATURES =
   "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads allow-orientation-lock";
@@ -26,6 +27,7 @@ export function ImpersonatorIframe() {
   const publicClient = usePublicClient();
   const { openModal } = useModalPromise();
   const { sendTransactionAsync } = useSendTransaction();
+  const { safeInfo, safe } = useSafeApp();
 
   const sendMessageToIFrame = ({
     eventID,
@@ -64,16 +66,24 @@ export function ImpersonatorIframe() {
       switch (method) {
         case Methods.getSafeInfo: {
           console.log("< < < known method:", "getSafeInfo", event);
-          sendMessageToIFrame({
-            eventID,
-            data: {
-              safeAddress: address,
-              chainId,
-              owners: [],
-              threshold: 1,
-              isReadOnly: false,
-            },
-          });
+
+          if (safeInfo) {
+            sendMessageToIFrame({
+              eventID,
+              data: safeInfo,
+            });
+          } else {
+            sendMessageToIFrame({
+              eventID,
+              data: {
+                safeAddress: address,
+                chainId,
+                owners: [address],
+                threshold: 1,
+                isReadOnly: false,
+              },
+            });
+          }
           return;
         }
 
@@ -106,27 +116,41 @@ export function ImpersonatorIframe() {
             console.log(`sendTransactions > tx length >`, params.txs);
 
             for (let q = 0; q < params.txs.length; q++) {
-              if (params.txs[q].data.includes("095ea7b3")) {
-                const hash = await sendTransactionAsync({
-                  to: params.txs[q].to as `0x${string}`,
-                  value: BigInt(params.txs[q].value),
-                  data: params.txs[q].data,
-                });
-                data.push(hash);
-                try {
-                  await publicClient.waitForTransactionReceipt({
-                    hash,
-                  });
-                } catch (error) {
-                  console.error(error);
-                }
-                continue;
-              }
+              const tx = params.txs[q];
 
-              console.log(`sendTransactions > tx id ${q} >`);
-              const hash = await openModal(params.txs[q]);
-              console.log("hash", hash);
-              data.push(hash);
+              if (safe && safeInfo) {
+                try {
+                  const result = await safe.txs.send({
+                    txs: [tx],
+                  });
+                  data.push(result.safeTxHash);
+                } catch (error) {
+                  console.error("Safe transaction failed:", error);
+                  throw error;
+                }
+              } else {
+                if (tx.data.includes("095ea7b3")) {
+                  const hash = await sendTransactionAsync({
+                    to: tx.to as `0x${string}`,
+                    value: BigInt(tx.value),
+                    data: tx.data,
+                  });
+                  data.push(hash);
+                  try {
+                    await publicClient.waitForTransactionReceipt({
+                      hash,
+                    });
+                  } catch (error) {
+                    console.error(error);
+                  }
+                  continue;
+                }
+
+                console.log(`sendTransactions > tx id ${q} >`);
+                const hash = await openModal(tx);
+                console.log("hash", hash);
+                data.push(hash);
+              }
             }
 
             sendMessageToIFrame({ eventID, data });
@@ -183,7 +207,16 @@ export function ImpersonatorIframe() {
     return () => {
       window.removeEventListener("message", handleMessage);
     };
-  }, [walletClient, address, deferredUrl, openModal, chainId, publicClient]);
+  }, [
+    walletClient,
+    address,
+    deferredUrl,
+    openModal,
+    chainId,
+    publicClient,
+    safe,
+    safeInfo,
+  ]);
 
   return (
     <div className="flex flex-col gap-2">
