@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useWalletConnectClient } from "@/hooks/use-wallet-connect-client.ts";
+import { useSafeApp } from "@/providers/safe-app-provider";
 
 import { Address, Hex } from "viem";
 
@@ -14,6 +15,7 @@ function ImpersonatorWalletConnect() {
   const [wcUrl, setWcUrl] = useState("");
   const { data: walletClient } = useWalletClient();
   const { openModal } = useModalPromise();
+  const { safeInfo, safe } = useSafeApp();
 
   useEffect(() => {
     if (!client || !address || !chainId || !walletClient) {
@@ -52,7 +54,7 @@ function ImpersonatorWalletConnect() {
 
     client.on("session_event", (event) => {
       console.log("session_event", event);
-    })
+    });
 
     client.on("session_request", async (event) => {
       const { method, params } = event.params.request;
@@ -82,10 +84,30 @@ function ImpersonatorWalletConnect() {
           };
 
           try {
-            const hash = await openModal({
-              to: txRequest.to as Address,
-              data: txRequest.data as Hex,
-            });
+            let hash: string;
+
+            if (safe && safeInfo) {
+              try {
+                const result = await safe.txs.send({
+                  txs: [
+                    {
+                      to: txRequest.to as Address,
+                      data: txRequest.data as Hex,
+                      value: txRequest.value ? BigInt(txRequest.value) : 0n,
+                    },
+                  ],
+                });
+                hash = result.safeTxHash;
+              } catch (error) {
+                console.error("Safe transaction failed:", error);
+                throw error;
+              }
+            } else {
+              hash = await openModal({
+                to: txRequest.to as Address,
+                data: txRequest.data as Hex,
+              });
+            }
 
             await client.respond({
               topic: event.topic,
@@ -155,7 +177,7 @@ function ImpersonatorWalletConnect() {
         client.removeAllListeners("session_delete");
       }
     };
-  }, [client, address, chainId, walletClient]);
+  }, [client, address, chainId, walletClient, safe, safeInfo]);
 
   async function handleConnect() {
     if (!client) return;

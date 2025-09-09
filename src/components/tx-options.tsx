@@ -49,9 +49,13 @@ import {
   formatBalance,
   formatToken,
   getEnumValues,
+  getExplorerUrl,
   shortenAddress,
+  waitForTx,
 } from "@/lib/utils.ts";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
+import { toast } from "sonner";
+import { useSafeApp } from "@/providers/safe-app-provider.tsx";
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -135,7 +139,7 @@ const createCheckComp =
   };
 
 const CheckComp = createCheckComp("Check", "Check address");
-const ApprovalComp = createCheckComp("Approval");
+const ApprovalComp = createCheckComp("Approval", "Where to approve");
 const WithdrawalComp = createCheckComp("Withdrawal", "Where to withdraw");
 
 const transformToMetadata = async (
@@ -213,6 +217,8 @@ export const TxOptions = () => {
   const chainId = useChainId();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  const { safeInfo, safe } = useSafeApp();
+
   const {
     mode,
     setMode,
@@ -382,26 +388,11 @@ export const TxOptions = () => {
       }
 
       case EMode["pre/post"]: {
-        let balance = 0n;
-
-        try {
-          balance = await publicClient.readContract({
-            abi: erc20Abi,
-            address: to?.token.address as `0x${string}`,
-            functionName: "balanceOf",
-            args: [address as `0x${string}`],
-          });
-        } catch (error) {
-          console.error(error);
-        }
-
         changePostTransferCheck(0, {
           target: String(address),
           token: formatToken(to?.token.symbol, to?.token.address),
           balance: formatBalance(
-            BigInt(
-              Number((to?.value.diff ?? 0n) + balance) * (1 - slippage / 100),
-            ),
+            BigInt(Number(to?.value.post || 0n) * (1 - slippage / 100)),
             to?.token.decimals,
           ),
         });
@@ -498,24 +489,70 @@ export const TxOptions = () => {
         continue;
       }
 
-      const hash = await writeContractAsync({
-        abi: erc20Abi,
-        address: token.token as `0x${string}`,
-        functionName: "approve",
-        args: [
-          proxy.address,
-          parseUnits(token.balance.toString().replace(",", "."), decimals),
-        ],
-      });
+      if (safe && safeInfo) {
+        try {
+          const approvalTx = {
+            to: token.token as `0x${string}`,
+            data: encodeFunctionData({
+              abi: erc20Abi,
+              functionName: "approve",
+              args: [
+                proxy.address,
+                parseUnits(
+                  token.balance.toString().replace(",", "."),
+                  decimals,
+                ),
+              ],
+            }),
+            value: 0n,
+          };
 
-      try {
-        const receipt = await publicClient.waitForTransactionReceipt({
-          hash,
+          const result = await safe.txs.send({
+            txs: [approvalTx],
+          });
+
+          console.log("Safe approval hash", result.safeTxHash);
+
+          toast.success("Approval sent to Safe for signing!", {
+            duration: 7_000,
+            position: "top-center",
+            closeButton: true,
+            action: {
+              label: "View in Safe",
+              onClick: () =>
+                window.open(
+                  `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                ),
+            },
+          });
+        } catch (error) {
+          console.error("Safe approval failed:", error);
+          toast.error("Safe approval failed!");
+          setIsLoading(false);
+          return;
+        }
+      } else {
+        const hash = await writeContractAsync({
+          abi: erc20Abi,
+          address: token.token as `0x${string}`,
+          functionName: "approve",
+          args: [
+            proxy.address,
+            parseUnits(token.balance.toString().replace(",", "."), decimals),
+          ],
         });
 
-        console.log("token approval hash", hash, receipt);
-      } catch (error) {
-        console.error(error);
+        try {
+          const receipt = await publicClient.waitForTransactionReceipt({
+            hash,
+          });
+
+          console.log("token approval hash", hash, receipt);
+        } catch (error) {
+          console.error(error);
+        }
       }
     }
 
@@ -526,55 +563,135 @@ export const TxOptions = () => {
 
         transformToMetadata(checks.diffs, publicClient),
         transformToMetadata(
-          tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
+          tokenApprovals.map((check) => ({ ...check, target: tx.to })),
           publicClient,
         ),
         transformToMetadata(checks.withdrawals, publicClient),
       ]);
 
     try {
-      switch (mode) {
-        case EMode.diifs: {
-          const hash = await writeContractAsync({
-            abi: proxy.abi,
-            address: proxy.address,
-            functionName: "proxyCallMetadataCalldataDiffs",
-            args: [diffs, approvals, tx.to, data, withdrawals],
-            value: value
-              ? parseUnits(value.toString().replace(",", "."), 18)
-              : undefined,
-          });
+      let hash: `0x${string}` = "0x";
 
-          resolve(hash);
-          break;
+      if (safe && safeInfo) {
+        const mainTx = {
+          to: proxy.address,
+          data: (() => {
+            switch (mode) {
+              case EMode.diifs: {
+                return encodeFunctionData({
+                  abi: proxy.abi,
+                  functionName: "proxyCallMetadataCalldataDiffs",
+                  args: [diffs, approvals, tx.to, data, withdrawals],
+                });
+              }
+              case EMode["pre/post"]: {
+                return encodeFunctionData({
+                  abi: proxy.abi,
+                  functionName: "proxyCallMetadataCalldata",
+                  args: [
+                    postTransfers,
+                    preTransfers,
+                    approvals,
+                    tx.to,
+                    data,
+                    withdrawals,
+                  ],
+                });
+              }
+              default:
+                return "0x";
+            }
+          })(),
+          value: value
+            ? parseUnits(value.toString().replace(",", "."), 18)
+            : 0n,
+        };
+
+        const result = await safe.txs.send({
+          txs: [mainTx],
+        });
+
+        hash = result.safeTxHash as `0x${string}`;
+
+        toast.success("Transaction sent to Safe for signing!", {
+          duration: 7_000,
+          position: "top-center",
+          closeButton: true,
+          action: {
+            label: "View in Safe",
+            onClick: () =>
+              window.open(
+                `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
+                "_blank",
+                "noopener,noreferrer",
+              ),
+          },
+        });
+      } else {
+        switch (mode) {
+          case EMode.diifs: {
+            hash = await writeContractAsync({
+              abi: proxy.abi,
+              address: proxy.address,
+              functionName: "proxyCallMetadataCalldataDiffs",
+              args: [diffs, approvals, tx.to, data, withdrawals],
+              value: value
+                ? parseUnits(value.toString().replace(",", "."), 18)
+                : undefined,
+            });
+
+            break;
+          }
+
+          case EMode["pre/post"]: {
+            hash = await writeContractAsync({
+              abi: proxy.abi,
+              address: proxy.address,
+              functionName: "proxyCallMetadataCalldata",
+              args: [
+                postTransfers,
+                preTransfers,
+                approvals,
+                tx.to,
+                data,
+                withdrawals,
+              ],
+              value: value
+                ? parseUnits(value.toString().replace(",", "."), 18)
+                : undefined,
+            });
+
+            break;
+          }
         }
 
-        case EMode["pre/post"]: {
-          const hash = await writeContractAsync({
-            abi: proxy.abi,
-            address: proxy.address,
-            functionName: "proxyCallMetadataCalldata",
-            args: [
-              postTransfers,
-              preTransfers,
-              approvals,
-              tx.to,
-              data,
-              withdrawals,
-            ],
-            value: value
-              ? parseUnits(value.toString().replace(",", "."), 18)
-              : undefined,
-          });
+        const txData = await waitForTx(publicClient, hash, 1);
 
-          resolve(hash);
-          break;
+        if (txData?.status === "success") {
+          toast.success("Transaction sent successfully!", {
+            duration: 7_000,
+            position: "top-center",
+            closeButton: true,
+            action: {
+              label: "Open in Explorer",
+              onClick: () =>
+                window.open(
+                  `${getExplorerUrl(chainId)}/tx/${hash}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                ),
+            },
+          });
+        } else {
+          toast.error("Transaction sent unsuccessfully!");
         }
       }
 
+      resolve(hash);
       hideModal();
     } catch (error) {
       console.error(error);
+      toast.error("Transaction failed!");
       closeModal();
     } finally {
       setIsLoading(false);
@@ -642,17 +759,13 @@ export const TxOptions = () => {
                 })}
               </TabsList>
             </Tabs>
-            {mode === EMode.diifs && (
-              <>
-                <Label htmlFor="Slippage">Slippage</Label>
-                <Input
-                  value={inputSlippage}
-                  onChange={handleChange}
-                  onBlur={handleBlur}
-                  placeholder="Slippage"
-                />
-              </>
-            )}
+            <Label htmlFor="Slippage">Slippage</Label>
+            <Input
+              value={inputSlippage}
+              onChange={handleChange}
+              onBlur={handleBlur}
+              placeholder="Slippage"
+            />
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>

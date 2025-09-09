@@ -7,11 +7,14 @@ import {
 import ImpersonatorWalletConnect from "@/components/impersonator-wallet-connect.tsx";
 import { ImpersonatorIframe } from "@/components/impersonator-iframe.tsx";
 import { useAccount } from "wagmi";
+import { useSafeApp } from "@/providers/safe-app-provider.tsx";
 
 export const ImpersonatorPage = () => {
   const { address } = useAccount();
+  const { safeInfo } = useSafeApp();
+  const isInSafeContext = window.parent !== window || safeInfo;
 
-  if (!address) return null;
+  if (!address && !isInSafeContext) return null;
 
   return (
     <div className="flex flex-col gap-2">
