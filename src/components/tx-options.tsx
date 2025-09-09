@@ -139,7 +139,7 @@ const createCheckComp =
   };
 
 const CheckComp = createCheckComp("Check", "Check address");
-const ApprovalComp = createCheckComp("Approval");
+const ApprovalComp = createCheckComp("Approval", "Where to approve");
 const WithdrawalComp = createCheckComp("Withdrawal", "Where to withdraw");
 
 const transformToMetadata = async (
@@ -563,7 +563,7 @@ export const TxOptions = () => {
 
         transformToMetadata(checks.diffs, publicClient),
         transformToMetadata(
-          tokenApprovals.map((check) => ({ ...check, target: proxy.address })),
+          tokenApprovals.map((check) => ({ ...check, target: tx.to })),
           publicClient,
         ),
         transformToMetadata(checks.withdrawals, publicClient),
