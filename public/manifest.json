@@ -1,0 +1,40 @@
+{
+  "name": "EIP-XXXX Impersonator",
+  "description": "EIP-XXXX Impersonator",
+  "iconPath": "vite.svg",
+  "providedBy": {
+    "name": "EIP-XXXX",
+    "url": "https://github.com"
+  },
+  "version": "1.0.0",
+  "shortName": "EIP-XXXX Impersonator",
+  "chainIds": [
+    1,
+    10,
+    56,
+    100,
+    137,
+    42161,
+    43114,
+    8453,
+    11155111
+  ],
+  "features": [
+    "BATCHED_TRANSACTIONS",
+    "CONTRACT_INTERACTION",
+    "DOMAIN_LOOKUP",
+    "EIP1559",
+    "SAFE_TX_GAS_OPTIONAL",
+    "SPENDING_LIMIT",
+    "TX_SIMULATION",
+    "WALLET_CONNECT"
+  ],
+  "theme": {
+    "backgroundColor": "#000000",
+    "textColor": "#ffffff"
+  },
+  "appUrl": "https://github.com",
+  "tags": [
+    "impersonator"
+  ]
+}
