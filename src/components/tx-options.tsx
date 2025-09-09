@@ -562,10 +562,7 @@ export const TxOptions = () => {
         transformToMetadata(checks.preTransfer, publicClient),
 
         transformToMetadata(checks.diffs, publicClient),
-        transformToMetadata(
-          tokenApprovals.map((check) => ({ ...check, target: tx.to })),
-          publicClient,
-        ),
+        transformToMetadata(tokenApprovals, publicClient),
         transformToMetadata(checks.withdrawals, publicClient),
       ]);
 
