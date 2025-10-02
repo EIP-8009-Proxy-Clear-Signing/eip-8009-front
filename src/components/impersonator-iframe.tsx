@@ -22,7 +22,7 @@ export function ImpersonatorIframe() {
   const iframeRef = useRef<any>(null);
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const [url, setUrl] = useState("https://app.uniswap.org/");
+  const [url, setUrl] = useState("https://uniswap-eip.ilya-kubariev.workers.dev/swap");
   const [deferredUrl] = useDebounce(url, 500);
   const publicClient = usePublicClient();
   const { openModal } = useModalPromise();
