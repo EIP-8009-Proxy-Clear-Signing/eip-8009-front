@@ -540,7 +540,7 @@ export const TxOptions = () => {
           functionName: "approve",
           args: [
             proxy.address,
-            parseUnits(token.balance.toString().replace(",", "."), decimals),
+            BigInt(parseUnits((token.balance).toString().replace(",", "."), decimals)) + 10n,
           ],
         });
 
