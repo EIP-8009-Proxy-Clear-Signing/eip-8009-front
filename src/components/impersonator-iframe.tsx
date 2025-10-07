@@ -51,6 +51,7 @@ export function ImpersonatorIframe() {
         message,
         deferredUrl! || "*",
       );
+      
     }
   };
 
@@ -148,12 +149,11 @@ export function ImpersonatorIframe() {
 
                 console.log(`sendTransactions > tx id ${q} >`);
                 const hash = await openModal(tx);
-                console.log("hash", hash);
                 data.push(hash);
               }
             }
-
-            sendMessageToIFrame({ eventID, data });
+            
+            sendMessageToIFrame({ eventID, data: data[0] });
             return;
           } catch (error) {
             console.log("event > sendTransactions > error", error);
