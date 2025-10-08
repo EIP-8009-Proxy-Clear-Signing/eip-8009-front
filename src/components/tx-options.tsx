@@ -1,4 +1,4 @@
-import { useModalPromise } from "@/hooks/use-modal-promise";
+import { useModalPromise } from '@/hooks/use-modal-promise';
 import {
   Dialog,
   DialogContent,
@@ -6,32 +6,32 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "./ui/dialog";
-import { Label } from "./ui/label";
-import { Button } from "./ui/button";
-import { Card } from "./ui/card";
-import { Input } from "./ui/input";
-import { Loader2, X } from "lucide-react";
+} from './ui/dialog';
+import { Label } from './ui/label';
+import { Button } from './ui/button';
+import { Card } from './ui/card';
+import { Input } from './ui/input';
+import { Loader2, X } from 'lucide-react';
 import {
   Check,
   EMode,
   MAX_SLIPPAGE,
   MIN_SLIPPAGE,
   useChecks,
-} from "@/hooks/use-checks";
+} from '@/hooks/use-checks';
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "./ui/accordion";
+} from './ui/accordion';
 import {
   useAccount,
   useChainId,
   usePublicClient,
   useWriteContract,
-} from "wagmi";
-import { getProxyContract } from "@/lib/contracts";
+} from 'wagmi';
+import { getProxyContract } from '@/lib/contracts';
 import {
   Abi,
   decodeFunctionData,
@@ -42,9 +42,9 @@ import {
   parseUnits,
   PublicClient,
   zeroAddress,
-} from "viem";
-import { whatsabi } from "@shazow/whatsabi";
-import { ChangeEvent, useCallback, useEffect, useState } from "react";
+} from 'viem';
+import { whatsabi } from '@shazow/whatsabi';
+import { ChangeEvent, useCallback, useEffect, useState } from 'react';
 import {
   formatBalance,
   formatToken,
@@ -52,20 +52,20 @@ import {
   getExplorerUrl,
   shortenAddress,
   waitForTx,
-} from "@/lib/utils.ts";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
-import { toast } from "sonner";
-import { useSafeApp } from "@/providers/safe-app-provider.tsx";
+} from '@/lib/utils.ts';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs.tsx';
+import { toast } from 'sonner';
+import { useSafeApp } from '@/providers/safe-app-provider.tsx';
 
 function swapAddressInArgsTraverse<T>(
   args: T,
   from: string,
-  to: string,
+  to: string
 ): unknown[] | T {
   return Array.isArray(args)
     ? args.map((arg: unknown, index: number) => {
-        if (typeof arg === "string" && arg.toLowerCase().includes(from)) {
-          console.log("found", index, arg, from, to);
+        if (typeof arg === 'string' && arg.toLowerCase().includes(from)) {
+          console.log('found', index, arg, from, to);
           return arg.toLowerCase().replaceAll(from, to) as T;
         }
         if (Array.isArray(arg)) {
@@ -138,13 +138,13 @@ const createCheckComp =
     );
   };
 
-const CheckComp = createCheckComp("Check", "Check address");
-const ApprovalComp = createCheckComp("Approval", "Where to approve");
-const WithdrawalComp = createCheckComp("Withdrawal", "Where to withdraw");
+const CheckComp = createCheckComp('Check', 'Check address');
+const ApprovalComp = createCheckComp('Approval', 'Where to approve');
+const WithdrawalComp = createCheckComp('Withdrawal', 'Where to withdraw');
 
 const transformToMetadata = async (
   checks: Check[],
-  publicClient: PublicClient,
+  publicClient: PublicClient
 ) => {
   const filteredChecks = checks.filter((check) => check.token !== zeroAddress);
   const ether = checks.find((check) => check.token === zeroAddress);
@@ -152,7 +152,7 @@ const transformToMetadata = async (
   const checksSymbolRequests = filteredChecks.map(({ token }) => ({
     abi: erc20Abi,
     address: token as `0x${string}`,
-    functionName: "symbol" as const,
+    functionName: 'symbol' as const,
     args: [],
   }));
 
@@ -164,7 +164,7 @@ const transformToMetadata = async (
   const checksDecimalsRequests = filteredChecks.map(({ token }) => ({
     abi: erc20Abi,
     address: token as `0x${string}`,
-    functionName: "decimals" as const,
+    functionName: 'decimals' as const,
     args: [],
   }));
 
@@ -178,8 +178,8 @@ const transformToMetadata = async (
       target: balance.target as `0x${string}`,
       token: balance.token as `0x${string}`,
       balance: parseUnits(
-        balance.balance.toString().replace(",", "."),
-        checksDecimals[index],
+        balance.balance.toString().replace(',', '.'),
+        checksDecimals[index]
       ),
     },
     symbol: checksSymbols[index],
@@ -191,9 +191,9 @@ const transformToMetadata = async (
       balance: {
         target: ether.target as `0x${string}`,
         token: zeroAddress,
-        balance: parseUnits(ether.balance.toString().replace(",", "."), 18),
+        balance: parseUnits(ether.balance.toString().replace(',', '.'), 18),
       },
-      symbol: "ETH",
+      symbol: 'ETH',
       decimals: 18,
     });
   }
@@ -271,7 +271,7 @@ export const TxOptions = () => {
       }
     });
 
-    console.log("FROM > TO", from, to);
+    console.log('FROM > TO', from, to);
 
     if (!checks.approvals.length) {
       createApprovalCheck();
@@ -282,7 +282,7 @@ export const TxOptions = () => {
     }
 
     switch (mode) {
-      case "diifs": {
+      case 'diifs': {
         if (!checks.diffs.length) {
           createDiffsCheck();
           createDiffsCheck();
@@ -290,7 +290,7 @@ export const TxOptions = () => {
         break;
       }
 
-      case EMode["pre/post"]: {
+      case EMode['pre/post']: {
         if (!checks.postTransfer.length) {
           createPostTransferCheck();
         }
@@ -298,7 +298,7 @@ export const TxOptions = () => {
       }
     }
 
-    let appSymbol = "ETH";
+    let appSymbol = 'ETH';
     let appDecimals = 18;
 
     if (
@@ -310,13 +310,13 @@ export const TxOptions = () => {
           {
             abi: erc20Abi,
             address: from?.token.address as `0x${string}`,
-            functionName: "symbol" as const,
+            functionName: 'symbol' as const,
             args: [],
           },
           {
             abi: erc20Abi,
             address: from?.token.address as `0x${string}`,
-            functionName: "decimals" as const,
+            functionName: 'decimals' as const,
             args: [],
           },
         ],
@@ -324,15 +324,30 @@ export const TxOptions = () => {
       });
     }
 
+    // Add 0.1% buffer to account for precision loss in number conversion
+    const rawApprovalAmount = Math.abs(Number(from?.value.diff || 0n));
+    const approvalBalance = formatBalance(from?.value.diff, from?.token.decimals) * 1.001;
+
+    console.log('🔍 DEBUG: Setting approval check:', {
+      target: tx.to,
+      token: formatToken(from?.token.symbol, from?.token.address),
+      balance: approvalBalance,
+      rawDiff: from?.value.diff?.toString(),
+      rawApprovalAmount,
+      symbol: appSymbol,
+      decimals: appDecimals,
+      note: 'Added 0.1% buffer for precision loss',
+    });
+
     changeApprovalCheck(0, {
       target: tx.to,
       token: formatToken(from?.token.symbol, from?.token.address),
-      balance: formatBalance(from?.value.diff, from?.token.decimals),
+      balance: approvalBalance,
       symbol: appSymbol,
       decimals: appDecimals,
     });
 
-    let withSymbol = "ETH";
+    let withSymbol = 'ETH';
     let withDecimals = 18;
 
     if (to?.token.address !== zeroAddress && to?.token.address !== ethAddress) {
@@ -341,13 +356,13 @@ export const TxOptions = () => {
           {
             abi: erc20Abi,
             address: to?.token.address as `0x${string}`,
-            functionName: "symbol" as const,
+            functionName: 'symbol' as const,
             args: [],
           },
           {
             abi: erc20Abi,
             address: to?.token.address as `0x${string}`,
-            functionName: "decimals" as const,
+            functionName: 'decimals' as const,
             args: [],
           },
         ],
@@ -375,25 +390,29 @@ export const TxOptions = () => {
             (1 - slippage / 100),
         });
 
+        // Use the same calculation as approvals to avoid precision mismatch
+        const inputDiffBalance = -(
+          formatBalance(from?.value.diff, from?.token.decimals) *
+          1.001 * // 0.1% buffer for precision loss
+          (1 + slippage / 100)
+        );
+
         changeDiffsCheck(1, {
           target: String(address),
           token: formatToken(from?.token.symbol, from?.token.address),
-          balance: -(
-            formatBalance(from?.value.diff, from?.token.decimals) *
-            (1 + slippage / 100)
-          ),
+          balance: inputDiffBalance,
         });
 
         break;
       }
 
-      case EMode["pre/post"]: {
+      case EMode['pre/post']: {
         changePostTransferCheck(0, {
           target: String(address),
           token: formatToken(to?.token.symbol, to?.token.address),
           balance: formatBalance(
             BigInt(Number(to?.value.post || 0n) * (1 - slippage / 100)),
-            to?.token.decimals,
+            to?.token.decimals
           ),
         });
 
@@ -409,7 +428,7 @@ export const TxOptions = () => {
   const handleSave = async () => {
     setIsLoading(true);
     if (!address || !publicClient || !tx || !resolve) {
-      console.error("No address or public client or tx or resolve");
+      console.error('No address or public client or tx or resolve');
       setIsLoading(false);
       return;
     }
@@ -424,7 +443,7 @@ export const TxOptions = () => {
     if (signatures.length > 0) {
       const fnSignature = signatures[0];
       const fullFragment = `function ${fnSignature}`;
-      console.log("fullFragment", fullFragment);
+      console.log('fullFragment', fullFragment);
       const abi = parseAbi([fullFragment]) as Abi;
 
       const decoded = decodeFunctionData({
@@ -432,19 +451,33 @@ export const TxOptions = () => {
         data: tx.data,
       });
 
-      console.log("decoded args", decoded.args);
-      console.log("decoded functionName", decoded.functionName);
+      console.log('decoded args', decoded.args);
+      console.log('decoded functionName', decoded.functionName);
+
+      console.log('🔍 DEBUG: Address replacement:', {
+        userAddress: address,
+        proxyAddress: proxy.address,
+        originalArgs: JSON.stringify(decoded.args, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        ),
+      });
 
       let newArgs = swapAddressInArgsTraverse(
         decoded.args || [],
         address.toLowerCase(),
-        proxy.address.toLowerCase(),
+        proxy.address.toLowerCase()
       );
       newArgs = swapAddressInArgsTraverse(
         newArgs,
         address.slice(2).toLowerCase(),
-        proxy.address.slice(2).toLowerCase(),
+        proxy.address.slice(2).toLowerCase()
       );
+
+      console.log('🔍 DEBUG: After address replacement:', {
+        modifiedArgs: JSON.stringify(newArgs, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        ),
+      });
 
       const newData = encodeFunctionData({
         abi,
@@ -452,40 +485,79 @@ export const TxOptions = () => {
         args: newArgs,
       });
 
+      console.log('🔍 DEBUG: Transaction data:', {
+        originalData: tx.data,
+        modifiedData: newData,
+        dataLength: `${tx.data.length} -> ${newData.length}`,
+      });
+
       data = newData;
     }
 
     const tokenApprovals = checks.approvals.filter(
-      (check) => check.token !== zeroAddress,
+      (check) => check.token !== zeroAddress
     );
 
+    console.log('🔍 DEBUG: Token approvals from checks:', {
+      totalApprovals: checks.approvals.length,
+      tokenApprovals: tokenApprovals.map(t => ({
+        token: t.token,
+        target: t.target,
+        balance: t.balance,
+        symbol: t.symbol,
+        decimals: t.decimals,
+      })),
+    });
+
     const value = checks.approvals.find(
-      (check) => check.token === zeroAddress,
+      (check) => check.token === zeroAddress
     )?.balance;
 
     for (const token of tokenApprovals) {
-      const [allowance, decimals] = await publicClient.multicall({
+      const [allowance, decimals, balance] = await publicClient.multicall({
         contracts: [
           {
             abi: erc20Abi,
             address: token.token as `0x${string}`,
-            functionName: "allowance",
+            functionName: 'allowance',
             args: [address, proxy.address],
           },
           {
             abi: erc20Abi,
             address: token.token as `0x${string}`,
-            functionName: "decimals",
+            functionName: 'decimals',
             args: [],
+          },
+          {
+            abi: erc20Abi,
+            address: token.token as `0x${string}`,
+            functionName: 'balanceOf',
+            args: [address],
           },
         ],
         allowFailure: false,
       });
 
-      if (
-        allowance >=
-        parseUnits(token.balance.toString().replace(",", "."), decimals)
-      ) {
+      const needed = parseUnits(
+        token.balance.toString().replace(',', '.'),
+        decimals
+      );
+
+      console.log('approval', token, { allowance, needed, balance, isBigger: allowance >= needed });
+
+      console.log('🔍 DEBUG: User approval check:', {
+        tokenAddress: token.token,
+        tokenSymbol: token.symbol,
+        userAddress: address,
+        proxyAddress: proxy.address,
+        currentAllowance: allowance.toString(),
+        needed: needed.toString(),
+        userBalance: balance.toString(),
+        needsApproval: allowance < needed,
+      });
+
+      if (allowance >= needed) {
+        console.log('✅ Approval already sufficient, skipping');
         continue;
       }
 
@@ -495,12 +567,12 @@ export const TxOptions = () => {
             to: token.token as `0x${string}`,
             data: encodeFunctionData({
               abi: erc20Abi,
-              functionName: "approve",
+              functionName: 'approve',
               args: [
                 proxy.address,
                 parseUnits(
-                  token.balance.toString().replace(",", "."),
-                  decimals,
+                  token.balance.toString().replace(',', '.'),
+                  decimals
                 ),
               ],
             }),
@@ -511,36 +583,43 @@ export const TxOptions = () => {
             txs: [approvalTx],
           });
 
-          console.log("Safe approval hash", result.safeTxHash);
+          console.log('Safe approval hash', result.safeTxHash);
 
-          toast.success("Approval sent to Safe for signing!", {
+          toast.success('Approval sent to Safe for signing!', {
             duration: 7_000,
-            position: "top-center",
+            position: 'top-center',
             closeButton: true,
             action: {
-              label: "View in Safe",
+              label: 'View in Safe',
               onClick: () =>
                 window.open(
                   `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
-                  "_blank",
-                  "noopener,noreferrer",
+                  '_blank',
+                  'noopener,noreferrer'
                 ),
             },
           });
         } catch (error) {
-          console.error("Safe approval failed:", error);
-          toast.error("Safe approval failed!");
+          console.error('Safe approval failed:', error);
+          toast.error('Safe approval failed!');
           setIsLoading(false);
           return;
         }
       } else {
+        const canIncrease = balance >= needed;
+        const amountToApprove = canIncrease
+          ? needed + 1n
+          : balance;
+
+          console.log({canIncrease})
+
         const hash = await writeContractAsync({
           abi: erc20Abi,
           address: token.token as `0x${string}`,
-          functionName: "approve",
+          functionName: 'approve',
           args: [
             proxy.address,
-            BigInt(parseUnits((token.balance).toString().replace(",", "."), decimals)) + 100n,
+            amountToApprove,
           ],
         });
 
@@ -549,12 +628,21 @@ export const TxOptions = () => {
             hash,
           });
 
-          console.log("token approval hash", hash, receipt);
+          console.log('✅ User approval transaction confirmed:', {
+            hash,
+            status: receipt.status,
+            tokenAddress: token.token,
+            spender: proxy.address,
+            amount: amountToApprove.toString(),
+          });
         } catch (error) {
-          console.error(error);
+          console.error('❌ User approval transaction failed:', error);
         }
       }
     }
+
+    console.log('🔍 DEBUG: About to transform metadata for contract call');
+    console.log('🔍 DEBUG: tokenApprovals before transform:', tokenApprovals);
 
     const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
       await Promise.all([
@@ -566,8 +654,36 @@ export const TxOptions = () => {
         transformToMetadata(checks.withdrawals, publicClient),
       ]);
 
+    // 🔍 DEBUG: Log all parameters being sent to contract
+    console.log('🔍 DEBUG: Contract call parameters:');
+    console.log('Mode:', mode);
+    console.log('Target (SwapRouter02):', tx.to);
+    console.log('Proxy address:', proxy.address);
+    console.log('Approvals array:', JSON.stringify(approvals.map(a => ({
+      target: a.balance.target,
+      token: a.balance.token,
+      balance: a.balance.balance.toString(),
+      symbol: a.symbol,
+      decimals: a.decimals,
+    })), null, 2));
+    console.log('Withdrawals array:', JSON.stringify(withdrawals.map(w => ({
+      target: w.balance.target,
+      token: w.balance.token,
+      balance: w.balance.balance.toString(),
+      symbol: w.symbol,
+      decimals: w.decimals,
+    })), null, 2));
+    console.log('Diffs array:', JSON.stringify(diffs.map(d => ({
+      target: d.balance.target,
+      token: d.balance.token,
+      balance: d.balance.balance.toString(),
+      symbol: d.symbol,
+      decimals: d.decimals,
+    })), null, 2));
+    console.log('ETH value:', value);
+
     try {
-      let hash: `0x${string}` = "0x";
+      let hash: `0x${string}` = '0x';
 
       if (safe && safeInfo) {
         const mainTx = {
@@ -577,14 +693,14 @@ export const TxOptions = () => {
               case EMode.diifs: {
                 return encodeFunctionData({
                   abi: proxy.abi,
-                  functionName: "proxyCallMetadataCalldataDiffs",
+                  functionName: 'proxyCallMetadataCalldataDiffs',
                   args: [diffs, approvals, tx.to, data, withdrawals],
                 });
               }
-              case EMode["pre/post"]: {
+              case EMode['pre/post']: {
                 return encodeFunctionData({
                   abi: proxy.abi,
-                  functionName: "proxyCallMetadataCalldata",
+                  functionName: 'proxyCallMetadataCalldata',
                   args: [
                     postTransfers,
                     preTransfers,
@@ -596,11 +712,11 @@ export const TxOptions = () => {
                 });
               }
               default:
-                return "0x";
+                return '0x';
             }
           })(),
           value: value
-            ? parseUnits(value.toString().replace(",", "."), 18)
+            ? parseUnits(value.toString().replace(',', '.'), 18)
             : 0n,
         };
 
@@ -610,41 +726,56 @@ export const TxOptions = () => {
 
         hash = result.safeTxHash as `0x${string}`;
 
-        toast.success("Transaction sent to Safe for signing!", {
+        toast.success('Transaction sent to Safe for signing!', {
           duration: 7_000,
-          position: "top-center",
+          position: 'top-center',
           closeButton: true,
           action: {
-            label: "View in Safe",
+            label: 'View in Safe',
             onClick: () =>
               window.open(
                 `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
-                "_blank",
-                "noopener,noreferrer",
+                '_blank',
+                'noopener,noreferrer'
               ),
           },
         });
       } else {
         switch (mode) {
           case EMode.diifs: {
+            console.log('🚀 Calling proxyCallMetadataCalldataDiffs with:', {
+              diffsCount: diffs.length,
+              approvalsCount: approvals.length,
+              withdrawalsCount: withdrawals.length,
+              target: tx.to,
+            });
+
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
-              functionName: "proxyCallMetadataCalldataDiffs",
+              functionName: 'proxyCallMetadataCalldataDiffs',
               args: [diffs, approvals, tx.to, data, withdrawals],
               value: value
-                ? parseUnits(value.toString().replace(",", "."), 18)
+                ? parseUnits(value.toString().replace(',', '.'), 18)
                 : undefined,
             });
 
             break;
           }
 
-          case EMode["pre/post"]: {
+          case EMode['pre/post']: {
+            console.log('🚀 Calling proxyCallMetadataCalldata with:', {
+              postTransfersCount: postTransfers.length,
+              preTransfersCount: preTransfers.length,
+              approvalsCount: approvals.length,
+              withdrawalsCount: withdrawals.length,
+              target: tx.to,
+            });
+
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
-              functionName: "proxyCallMetadataCalldata",
+              functionName: 'proxyCallMetadataCalldata',
               args: [
                 postTransfers,
                 preTransfers,
@@ -654,7 +785,7 @@ export const TxOptions = () => {
                 withdrawals,
               ],
               value: value
-                ? parseUnits(value.toString().replace(",", "."), 18)
+                ? parseUnits(value.toString().replace(',', '.'), 18)
                 : undefined,
             });
 
@@ -664,31 +795,32 @@ export const TxOptions = () => {
 
         const txData = await waitForTx(publicClient, hash, 1);
 
-        if (txData?.status === "success") {
-          toast.success("Transaction sent successfully!", {
+        if (txData?.status === 'success') {
+          toast.success('Transaction sent successfully!', {
             duration: 7_000,
-            position: "top-center",
+            position: 'top-center',
             closeButton: true,
             action: {
-              label: "Open in Explorer",
+              label: 'Open in Explorer',
               onClick: () =>
                 window.open(
                   `${getExplorerUrl(chainId)}/tx/${hash}`,
-                  "_blank",
-                  "noopener,noreferrer",
+                  '_blank',
+                  'noopener,noreferrer'
                 ),
             },
           });
         } else {
-          toast.error("Transaction sent unsuccessfully!");
+          toast.error('Transaction sent unsuccessfully!');
         }
       }
 
       resolve(hash);
       hideModal();
     } catch (error) {
-      console.error(error);
-      toast.error("Transaction failed!");
+      console.error('❌ Transaction failed with error:', error);
+      console.error('Error details:', error);
+      toast.error(`Transaction failed: ${(error as any)?.message || 'Unknown error'}`);
       closeModal();
     } finally {
       setIsLoading(false);
@@ -697,18 +829,18 @@ export const TxOptions = () => {
 
   const clamp = useCallback(
     (n: number) => Math.min(Math.max(n, MIN_SLIPPAGE), MAX_SLIPPAGE),
-    [],
+    []
   );
 
   const handleChange = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
-    if (v === "" || /^\d*\.?\d*$/.test(v)) {
+    if (v === '' || /^\d*\.?\d*$/.test(v)) {
       setInputSlippage(v);
     }
   }, []);
 
   const handleBlur = useCallback(() => {
-    if (inputSlippage === "") {
+    if (inputSlippage === '') {
       setInputSlippage(slippage.toString());
       return;
     }
@@ -735,10 +867,10 @@ export const TxOptions = () => {
             <span className="text-sm">
               {tx
                 ? `Call to ${shortenAddress(tx.to)}`
-                : "Setup your tx options here."}
+                : 'Setup your tx options here.'}
             </span>
             <Button variant="outline" onClick={toggleAdvanced}>
-              {isAdvanced ? "Hide advanced" : "Show advanced"}
+              {isAdvanced ? 'Hide advanced' : 'Show advanced'}
             </Button>
           </DialogDescription>
         </DialogHeader>
@@ -811,7 +943,7 @@ export const TxOptions = () => {
                   </AccordionContent>
                 </AccordionItem>
               )}
-              {mode === EMode["pre/post"] && (
+              {mode === EMode['pre/post'] && (
                 <>
                   <AccordionItem value="pre-transfer">
                     <AccordionTrigger>Pre-transfer</AccordionTrigger>
@@ -877,8 +1009,8 @@ export const TxOptions = () => {
             Close
           </Button>
           <Button onClick={handleSave} disabled={isLoading}>
-            {isLoading && <Loader2 className="animate-spin" />}{" "}
-            {isLoading ? "Saving..." : "Save"}
+            {isLoading && <Loader2 className="animate-spin" />}{' '}
+            {isLoading ? 'Saving...' : 'Save'}
           </Button>
         </DialogFooter>
       </DialogContent>
