@@ -63,9 +63,9 @@ function swapAddressInArgsTraverse<T>(
   to: string
 ): unknown[] | T {
   return Array.isArray(args)
-    ? args.map((arg: unknown, index: number) => {
+    ? args.map((arg: unknown) => {
         if (typeof arg === 'string' && arg.toLowerCase().includes(from)) {
-          console.log('found', index, arg, from, to);
+          // console.log('found', index, arg, from, to);
           return arg.toLowerCase().replaceAll(from, to) as T;
         }
         if (Array.isArray(arg)) {
@@ -271,7 +271,7 @@ export const TxOptions = () => {
       }
     });
 
-    console.log('FROM > TO', from, to);
+    // console.log('FROM > TO', from, to);
 
     if (!checks.approvals.length) {
       createApprovalCheck();
@@ -443,7 +443,7 @@ export const TxOptions = () => {
     if (signatures.length > 0) {
       const fnSignature = signatures[0];
       const fullFragment = `function ${fnSignature}`;
-      console.log('fullFragment', fullFragment);
+      // console.log('fullFragment', fullFragment);
       const abi = parseAbi([fullFragment]) as Abi;
 
       const decoded = decodeFunctionData({
@@ -451,10 +451,10 @@ export const TxOptions = () => {
         data: tx.data,
       });
 
-      console.log('decoded args', decoded.args);
-      console.log('decoded functionName', decoded.functionName);
+      // console.log('decoded args', decoded.args);
+      // console.log('decoded functionName', decoded.functionName);
 
-      // console.log('🔍 DEBUG: Address replacement:', {
+      // // console.log('🔍 DEBUG: Address replacement:', {
       //   userAddress: address,
       //   proxyAddress: proxy.address,
       //   originalArgs: JSON.stringify(decoded.args, (_, value) =>
@@ -473,7 +473,7 @@ export const TxOptions = () => {
         proxy.address.slice(2).toLowerCase()
       );
 
-      // console.log('🔍 DEBUG: After address replacement:', {
+      // // console.log('🔍 DEBUG: After address replacement:', {
       //   modifiedArgs: JSON.stringify(newArgs, (key, value) =>
       //     typeof value === 'bigint' ? value.toString() : value
       //   ),
@@ -485,11 +485,11 @@ export const TxOptions = () => {
         args: newArgs,
       });
 
-      console.log('🔍 DEBUG: Transaction data:', {
-        originalData: tx.data,
-        modifiedData: newData,
-        dataLength: `${tx.data.length} -> ${newData.length}`,
-      });
+      // console.log('🔍 DEBUG: Transaction data:', {
+      //   originalData: tx.data,
+      //   modifiedData: newData,
+      //   dataLength: `${tx.data.length} -> ${newData.length}`,
+      // });
 
       data = newData;
     }
@@ -498,16 +498,16 @@ export const TxOptions = () => {
       (check) => check.token !== zeroAddress
     );
 
-    console.log('🔍 DEBUG: Token approvals from checks:', {
-      totalApprovals: checks.approvals.length,
-      tokenApprovals: tokenApprovals.map(t => ({
-        token: t.token,
-        target: t.target,
-        balance: t.balance,
-        symbol: t.symbol,
-        decimals: t.decimals,
-      })),
-    });
+    // console.log('🔍 DEBUG: Token approvals from checks:', {
+    //   totalApprovals: checks.approvals.length,
+    //   tokenApprovals: tokenApprovals.map(t => ({
+    //     token: t.token,
+    //     target: t.target,
+    //     balance: t.balance,
+    //     symbol: t.symbol,
+    //     decimals: t.decimals,
+    //   })),
+    // });
 
     const value = checks.approvals.find(
       (check) => check.token === zeroAddress
@@ -543,21 +543,21 @@ export const TxOptions = () => {
         decimals
       );
 
-      console.log('approval', token, { allowance, needed, balance, isBigger: allowance >= needed });
+      // console.log('approval', token, { allowance, needed, balance, isBigger: allowance >= needed });
 
-      console.log('🔍 DEBUG: User approval check:', {
-        tokenAddress: token.token,
-        tokenSymbol: token.symbol,
-        userAddress: address,
-        proxyAddress: proxy.address,
-        currentAllowance: allowance.toString(),
-        needed: needed.toString(),
-        userBalance: balance.toString(),
-        needsApproval: allowance < needed,
-      });
+      // console.log('🔍 DEBUG: User approval check:', {
+      //   tokenAddress: token.token,
+      //   tokenSymbol: token.symbol,
+      //   userAddress: address,
+      //   proxyAddress: proxy.address,
+      //   currentAllowance: allowance.toString(),
+      //   needed: needed.toString(),
+      //   userBalance: balance.toString(),
+      //   needsApproval: allowance < needed,
+      // });
 
       if (allowance >= needed) {
-        console.log('✅ Approval already sufficient, skipping');
+        // console.log('✅ Approval already sufficient, skipping');
         continue;
       }
 
@@ -611,7 +611,7 @@ export const TxOptions = () => {
           ? needed + 1n
           : balance;
 
-          console.log({canIncrease})
+          // console.log({canIncrease})
 
         const hash = await writeContractAsync({
           abi: erc20Abi,
@@ -641,8 +641,8 @@ export const TxOptions = () => {
       }
     }
 
-    console.log('🔍 DEBUG: About to transform metadata for contract call');
-    console.log('🔍 DEBUG: tokenApprovals before transform:', tokenApprovals);
+    // console.log('🔍 DEBUG: About to transform metadata for contract call');
+    // console.log('🔍 DEBUG: tokenApprovals before transform:', tokenApprovals);
 
     const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
       await Promise.all([
@@ -655,32 +655,32 @@ export const TxOptions = () => {
       ]);
 
     // 🔍 DEBUG: Log all parameters being sent to contract
-    console.log('🔍 DEBUG: Contract call parameters:');
-    console.log('Mode:', mode);
-    console.log('Target (SwapRouter02):', tx.to);
-    console.log('Proxy address:', proxy.address);
-    console.log('Approvals array:', JSON.stringify(approvals.map(a => ({
-      target: a.balance.target,
-      token: a.balance.token,
-      balance: a.balance.balance.toString(),
-      symbol: a.symbol,
-      decimals: a.decimals,
-    })), null, 2));
-    console.log('Withdrawals array:', JSON.stringify(withdrawals.map(w => ({
-      target: w.balance.target,
-      token: w.balance.token,
-      balance: w.balance.balance.toString(),
-      symbol: w.symbol,
-      decimals: w.decimals,
-    })), null, 2));
-    console.log('Diffs array:', JSON.stringify(diffs.map(d => ({
-      target: d.balance.target,
-      token: d.balance.token,
-      balance: d.balance.balance.toString(),
-      symbol: d.symbol,
-      decimals: d.decimals,
-    })), null, 2));
-    console.log('ETH value:', value);
+    // console.log('🔍 DEBUG: Contract call parameters:');
+    // console.log('Mode:', mode);
+    // console.log('Target (SwapRouter02):', tx.to);
+    // console.log('Proxy address:', proxy.address);
+    // console.log('Approvals array:', JSON.stringify(approvals.map(a => ({
+    //   target: a.balance.target,
+    //   token: a.balance.token,
+    //   balance: a.balance.balance.toString(),
+    //   symbol: a.symbol,
+    //   decimals: a.decimals,
+    // })), null, 2));
+    // console.log('Withdrawals array:', JSON.stringify(withdrawals.map(w => ({
+    //   target: w.balance.target,
+    //   token: w.balance.token,
+    //   balance: w.balance.balance.toString(),
+    //   symbol: w.symbol,
+    //   decimals: w.decimals,
+    // })), null, 2));
+    // console.log('Diffs array:', JSON.stringify(diffs.map(d => ({
+    //   target: d.balance.target,
+    //   token: d.balance.token,
+    //   balance: d.balance.balance.toString(),
+    //   symbol: d.symbol,
+    //   decimals: d.decimals,
+    // })), null, 2));
+    // console.log('ETH value:', value);
 
     try {
       let hash: `0x${string}` = '0x';
@@ -743,12 +743,12 @@ export const TxOptions = () => {
       } else {
         switch (mode) {
           case EMode.diifs: {
-            console.log('🚀 Calling proxyCallMetadataCalldataDiffs with:', {
-              diffsCount: diffs.length,
-              approvalsCount: approvals.length,
-              withdrawalsCount: withdrawals.length,
-              target: tx.to,
-            });
+            // console.log('🚀 Calling proxyCallMetadataCalldataDiffs with:', {
+            //   diffsCount: diffs.length,
+            //   approvalsCount: approvals.length,
+            //   withdrawalsCount: withdrawals.length,
+            //   target: tx.to,
+            // });
 
             hash = await writeContractAsync({
               abi: proxy.abi,
@@ -764,13 +764,13 @@ export const TxOptions = () => {
           }
 
           case EMode['pre/post']: {
-            console.log('🚀 Calling proxyCallMetadataCalldata with:', {
-              postTransfersCount: postTransfers.length,
-              preTransfersCount: preTransfers.length,
-              approvalsCount: approvals.length,
-              withdrawalsCount: withdrawals.length,
-              target: tx.to,
-            });
+            // console.log('🚀 Calling proxyCallMetadataCalldata with:', {
+            //   postTransfersCount: postTransfers.length,
+            //   preTransfersCount: preTransfers.length,
+            //   approvalsCount: approvals.length,
+            //   withdrawalsCount: withdrawals.length,
+            //   target: tx.to,
+            // });
 
             hash = await writeContractAsync({
               abi: proxy.abi,
