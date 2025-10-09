@@ -454,13 +454,13 @@ export const TxOptions = () => {
       console.log('decoded args', decoded.args);
       console.log('decoded functionName', decoded.functionName);
 
-      console.log('🔍 DEBUG: Address replacement:', {
-        userAddress: address,
-        proxyAddress: proxy.address,
-        originalArgs: JSON.stringify(decoded.args, (key, value) =>
-          typeof value === 'bigint' ? value.toString() : value
-        ),
-      });
+      // console.log('🔍 DEBUG: Address replacement:', {
+      //   userAddress: address,
+      //   proxyAddress: proxy.address,
+      //   originalArgs: JSON.stringify(decoded.args, (_, value) =>
+      //     typeof value === 'bigint' ? value.toString() : value
+      //   ),
+      // });
 
       let newArgs = swapAddressInArgsTraverse(
         decoded.args || [],
@@ -473,11 +473,11 @@ export const TxOptions = () => {
         proxy.address.slice(2).toLowerCase()
       );
 
-      console.log('🔍 DEBUG: After address replacement:', {
-        modifiedArgs: JSON.stringify(newArgs, (key, value) =>
-          typeof value === 'bigint' ? value.toString() : value
-        ),
-      });
+      // console.log('🔍 DEBUG: After address replacement:', {
+      //   modifiedArgs: JSON.stringify(newArgs, (key, value) =>
+      //     typeof value === 'bigint' ? value.toString() : value
+      //   ),
+      // });
 
       const newData = encodeFunctionData({
         abi,
