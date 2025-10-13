@@ -58,6 +58,26 @@ export function ImpersonatorIframe() {
   };
 
   useEffect(() => {
+    if (!iframeRef.current?.contentWindow) return;
+    if (!address) return;
+
+    const payload = {
+      type: 'WALLET_UPDATE',
+      payload: {
+        address,
+        chainId,
+      },
+    };
+
+    iframeRef.current.contentWindow.postMessage(
+      payload,
+      new URL(deferredUrl).origin
+    );
+
+    console.log('[Parent] sent message to iframe:', payload);
+  }, [address, chainId, deferredUrl]);
+
+  useEffect(() => {
     const handleMessage = async (event: any) => {
       if (event.origin !== new URL(deferredUrl).origin) return;
       if (!walletClient) return;
