@@ -244,6 +244,35 @@ export const TxOptions = () => {
 
   const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
 
+  const resetCheckState = useCallback(() => {
+    for (let i = checks.approvals.length - 1; i >= 0; i--) {
+      removeApprovalCheck(i);
+    }
+    for (let i = checks.withdrawals.length - 1; i >= 0; i--) {
+      removeWithdrawalCheck(i);
+    }
+    for (let i = checks.diffs.length - 1; i >= 0; i--) {
+      removeDiffsCheck(i);
+    }
+    for (let i = checks.preTransfer.length - 1; i >= 0; i--) {
+      removePreTransferCheck(i);
+    }
+    for (let i = checks.postTransfer.length - 1; i >= 0; i--) {
+      removePostTransferCheck(i);
+    }
+  }, [
+    checks.approvals.length,
+    checks.diffs.length,
+    checks.postTransfer.length,
+    checks.preTransfer.length,
+    checks.withdrawals.length,
+    removeApprovalCheck,
+    removeDiffsCheck,
+    removePostTransferCheck,
+    removePreTransferCheck,
+    removeWithdrawalCheck,
+  ]);
+
   const setDataToForm = async () => {
     if (!publicClient || tx === null) return;
 
@@ -326,7 +355,8 @@ export const TxOptions = () => {
 
     // Add 0.1% buffer to account for precision loss in number conversion
     const rawApprovalAmount = Math.abs(Number(from?.value.diff || 0n));
-    const approvalBalance = formatBalance(from?.value.diff, from?.token.decimals) * 1.001;
+    const approvalBalance =
+      formatBalance(from?.value.diff, from?.token.decimals) * 1.001;
 
     console.log('🔍 DEBUG: Setting approval check:', {
       target: tx.to,
@@ -607,20 +637,15 @@ export const TxOptions = () => {
         }
       } else {
         const canIncrease = balance >= needed;
-        const amountToApprove = canIncrease
-          ? needed + 1n
-          : balance;
+        const amountToApprove = canIncrease ? needed + 1n : balance;
 
-          // console.log({canIncrease})
+        // console.log({canIncrease})
 
         const hash = await writeContractAsync({
           abi: erc20Abi,
           address: token.token as `0x${string}`,
           functionName: 'approve',
-          args: [
-            proxy.address,
-            amountToApprove,
-          ],
+          args: [proxy.address, amountToApprove],
         });
 
         try {
@@ -635,8 +660,10 @@ export const TxOptions = () => {
             spender: proxy.address,
             amount: amountToApprove.toString(),
           });
+          resetCheckState();
         } catch (error) {
           console.error('❌ User approval transaction failed:', error);
+          resetCheckState();
         }
       }
     }
@@ -817,11 +844,15 @@ export const TxOptions = () => {
 
       resolve(hash);
       hideModal();
+      resetCheckState();
     } catch (error) {
       console.error('❌ Transaction failed with error:', error);
       console.error('Error details:', error);
-      toast.error(`Transaction failed: ${(error as any)?.message || 'Unknown error'}`);
+      toast.error(
+        `Transaction failed: ${(error as any)?.message || 'Unknown error'}`
+      );
       closeModal();
+      resetCheckState();
     } finally {
       setIsLoading(false);
     }
@@ -856,6 +887,7 @@ export const TxOptions = () => {
       open={modalOpen}
       onOpenChange={(open) => {
         if (!open) {
+          resetCheckState();
           closeModal();
         }
       }}
@@ -1005,7 +1037,13 @@ export const TxOptions = () => {
         )}
 
         <DialogFooter className="flex items-center justify-between">
-          <Button variant="outline" onClick={closeModal}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              resetCheckState();
+              closeModal();
+            }}
+          >
             Close
           </Button>
           <Button onClick={handleSave} disabled={isLoading}>
