@@ -140,7 +140,8 @@ function ImpersonatorWalletConnect() {
 
       try {
         const result = await walletClient.request({
-          // @ts-ignore
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-expect-error
           method,
           params: formattedParams,
         });

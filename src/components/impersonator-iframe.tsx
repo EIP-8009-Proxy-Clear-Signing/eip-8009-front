@@ -82,6 +82,17 @@ export function ImpersonatorIframe() {
       if (event.origin !== new URL(deferredUrl).origin) return;
       if (!walletClient) return;
 
+      // Handle debug messages from Uniswap
+      if (event.data?.type === 'UNISWAP_DEBUG') {
+        const { debugType, data, timestamp } = event.data;
+        const time = new Date(timestamp).toLocaleTimeString();
+        
+        console.group(`🔍 [${time}] Uniswap Debug: ${debugType}`);
+        console.log(data);
+        console.groupEnd();
+        return;
+      }
+
       const eventID = event.data?.id;
       const params = event.data?.params;
       const method = event.data?.method;
