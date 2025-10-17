@@ -24,7 +24,10 @@ export function ImpersonatorIframe() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const [url, setUrl] = useState("https://uniswap-eip.ilya-kubariev.workers.dev/#/swap");
+  const [url, setUrl] = useState(
+    'https://uniswap-eip.ilya-kubariev.workers.dev/#/swap'
+  );
+  const [iframeKey, setIframeKey] = useState(0);
   // const [url, setUrl] = useState('http://localhost:3000/swap');
   const [deferredUrl] = useDebounce(url, 500);
   const publicClient = usePublicClient();
@@ -86,7 +89,7 @@ export function ImpersonatorIframe() {
       if (event.data?.type === 'UNISWAP_DEBUG') {
         const { debugType, data, timestamp } = event.data;
         const time = new Date(timestamp).toLocaleTimeString();
-        
+
         console.group(`🔍 [${time}] Uniswap Debug: ${debugType}`);
         console.log(data);
         console.groupEnd();
@@ -262,16 +265,16 @@ export function ImpersonatorIframe() {
         <Button
           onClick={() => {
             if (iframeRef.current) {
-              // eslint-disable-next-line no-self-assign
-              iframeRef.current.src = iframeRef.current.src;
+              setIframeKey(iframeKey + 1);
             }
           }}
         >
-         <RotateCcw />
+          <RotateCcw />
         </Button>
       </div>
       <div className="border rounded-md overflow-hidden">
         <iframe
+          key={iframeKey}
           id={`iframe-${url}`}
           ref={iframeRef}
           src={deferredUrl}
