@@ -274,19 +274,55 @@ export const TxOptions = () => {
   ]);
 
   const setDataToForm = async () => {
-    if (!publicClient || tx === null) return;
+    if (!publicClient || tx === null) {
+      return;
+    }
 
-    const simRes = await publicClient.simulateCalls({
-      traceAssetChanges: true,
-      account: address,
-      calls: [
-        {
-          to: tx.to as `0x${string}`,
-          data: tx.data as `0x${string}`,
-          value: BigInt(tx.value || 0),
-        },
-      ],
-    });
+    let simRes;
+    try {
+      simRes = await publicClient.simulateCalls({
+        traceAssetChanges: true,
+        account: address,
+        calls: [
+          {
+            to: tx.to as `0x${string}`,
+            data: tx.data as `0x${string}`,
+            value: BigInt(tx.value || 0),
+          },
+        ],
+      });
+    } catch (error) {
+      console.warn('⚠️ Simulation failed:', error);
+      console.log(
+        '💡 Please manually configure approval and withdrawal checks'
+      );
+
+      // Create empty checks for manual configuration
+      if (!checks.approvals.length) {
+        createApprovalCheck();
+      }
+      if (!checks.withdrawals.length) {
+        createWithdrawalCheck();
+      }
+
+      switch (mode) {
+        case 'diifs': {
+          if (!checks.diffs.length) {
+            createDiffsCheck();
+            createDiffsCheck();
+          }
+          break;
+        }
+        case EMode['pre/post']: {
+          if (!checks.postTransfer.length) {
+            createPostTransferCheck();
+          }
+          break;
+        }
+      }
+
+      return; // Exit early if simulation fails
+    }
 
     const from = simRes.assetChanges.find((asset) => {
       if (0 > asset.value.diff) {
@@ -302,7 +338,13 @@ export const TxOptions = () => {
 
     // console.log('FROM > TO', from, to);
 
-    if (!checks.approvals.length) {
+    // Detect if input is ETH before creating checks
+    const isFromEth =
+      from?.token.address === zeroAddress || from?.token.address === ethAddress;
+    // const isFromEth = false;
+
+    // Only create approval check for non-ETH tokens
+    if (!checks.approvals.length && !isFromEth) {
       createApprovalCheck();
     }
 
@@ -312,8 +354,14 @@ export const TxOptions = () => {
 
     switch (mode) {
       case 'diifs': {
+        // Create first diff check (always needed for output token)
         if (!checks.diffs.length) {
           createDiffsCheck();
+        }
+
+        // Only create second diff check if input is not ETH
+        // (ETH is handled via transaction value)
+        if (checks.diffs.length < 2 && !isFromEth) {
           createDiffsCheck();
         }
         break;
@@ -330,10 +378,7 @@ export const TxOptions = () => {
     let appSymbol = 'ETH';
     let appDecimals = 18;
 
-    if (
-      from?.token.address !== zeroAddress &&
-      from?.token.address !== ethAddress
-    ) {
+    if (!isFromEth) {
       [appSymbol, appDecimals] = await publicClient.multicall({
         contracts: [
           {
@@ -352,23 +397,13 @@ export const TxOptions = () => {
         allowFailure: false,
       });
     }
-
     // Add 0.1% buffer to account for precision loss in number conversion
-    const rawApprovalAmount = Math.abs(Number(from?.value.diff || 0n));
     const approvalBalance =
       formatBalance(from?.value.diff, from?.token.decimals) * 1.001;
 
-    console.log('🔍 DEBUG: Setting approval check:', {
-      target: tx.to,
-      token: formatToken(from?.token.symbol, from?.token.address),
-      balance: approvalBalance,
-      rawDiff: from?.value.diff?.toString(),
-      rawApprovalAmount,
-      symbol: appSymbol,
-      decimals: appDecimals,
-      note: 'Added 0.1% buffer for precision loss',
-    });
-
+    // Only set approval check for non-ETH tokens
+    // ETH is sent via transaction value, not approvals
+    // if (!isFromEth) {
     changeApprovalCheck(0, {
       target: tx.to,
       token: formatToken(from?.token.symbol, from?.token.address),
@@ -376,6 +411,7 @@ export const TxOptions = () => {
       symbol: appSymbol,
       decimals: appDecimals,
     });
+    // }
 
     let withSymbol = 'ETH';
     let withDecimals = 18;
@@ -420,18 +456,23 @@ export const TxOptions = () => {
             (1 - slippage / 100),
         });
 
-        // Use the same calculation as approvals to avoid precision mismatch
-        const inputDiffBalance = -(
+        // Only add input diff if it's not ETH with negative value
+        // ETH being sent should be handled via transaction value, not diffs
+        const isEthInput =
+          from?.token.address === zeroAddress ||
+          from?.token.address === ethAddress;
+        const inputBalance = -(
           formatBalance(from?.value.diff, from?.token.decimals) *
-          1.001 * // 0.1% buffer for precision loss
           (1 + slippage / 100)
         );
 
-        changeDiffsCheck(1, {
-          target: String(address),
-          token: formatToken(from?.token.symbol, from?.token.address),
-          balance: inputDiffBalance,
-        });
+        if (!isEthInput || inputBalance >= 0) {
+          changeDiffsCheck(1, {
+            target: String(address),
+            token: formatToken(from?.token.symbol, from?.token.address),
+            balance: inputBalance,
+          });
+        }
 
         break;
       }
@@ -450,7 +491,7 @@ export const TxOptions = () => {
       }
     }
   };
-
+  
   useEffect(() => {
     setDataToForm();
   }, [tx, address, slippage, mode]);
@@ -484,14 +525,6 @@ export const TxOptions = () => {
       // console.log('decoded args', decoded.args);
       // console.log('decoded functionName', decoded.functionName);
 
-      // // console.log('🔍 DEBUG: Address replacement:', {
-      //   userAddress: address,
-      //   proxyAddress: proxy.address,
-      //   originalArgs: JSON.stringify(decoded.args, (_, value) =>
-      //     typeof value === 'bigint' ? value.toString() : value
-      //   ),
-      // });
-
       let newArgs = swapAddressInArgsTraverse(
         decoded.args || [],
         address.toLowerCase(),
@@ -503,47 +536,36 @@ export const TxOptions = () => {
         proxy.address.slice(2).toLowerCase()
       );
 
-      // // console.log('🔍 DEBUG: After address replacement:', {
-      //   modifiedArgs: JSON.stringify(newArgs, (key, value) =>
-      //     typeof value === 'bigint' ? value.toString() : value
-      //   ),
-      // });
-
       const newData = encodeFunctionData({
         abi,
         functionName: decoded.functionName,
         args: newArgs,
       });
 
-      // console.log('🔍 DEBUG: Transaction data:', {
-      //   originalData: tx.data,
-      //   modifiedData: newData,
-      //   dataLength: `${tx.data.length} -> ${newData.length}`,
-      // });
-
       data = newData;
     }
 
     const tokenApprovals = checks.approvals.filter(
-      (check) => check.token !== zeroAddress
+      (check) =>
+        check.token !== zeroAddress &&
+        check.token !== '' &&
+        check.token !== ethAddress
     );
 
-    // console.log('🔍 DEBUG: Token approvals from checks:', {
-    //   totalApprovals: checks.approvals.length,
-    //   tokenApprovals: tokenApprovals.map(t => ({
-    //     token: t.token,
-    //     target: t.target,
-    //     balance: t.balance,
-    //     symbol: t.symbol,
-    //     decimals: t.decimals,
-    //   })),
-    // });
-
-    const value = checks.approvals.find(
-      (check) => check.token === zeroAddress
-    )?.balance;
+    // Get ETH value from original transaction (not from checks, since we skip ETH approvals)
+    const value = tx.value ? BigInt(tx.value) : undefined;
 
     for (const token of tokenApprovals) {
+      // Additional safety check
+      if (
+        !token.token ||
+        token.token === '' ||
+        token.token === zeroAddress ||
+        token.token === ethAddress
+      ) {
+        continue;
+      }
+
       const [allowance, decimals, balance] = await publicClient.multicall({
         contracts: [
           {
@@ -572,19 +594,6 @@ export const TxOptions = () => {
         token.balance.toString().replace(',', '.'),
         decimals
       );
-
-      // console.log('approval', token, { allowance, needed, balance, isBigger: allowance >= needed });
-
-      // console.log('🔍 DEBUG: User approval check:', {
-      //   tokenAddress: token.token,
-      //   tokenSymbol: token.symbol,
-      //   userAddress: address,
-      //   proxyAddress: proxy.address,
-      //   currentAllowance: allowance.toString(),
-      //   needed: needed.toString(),
-      //   userBalance: balance.toString(),
-      //   needsApproval: allowance < needed,
-      // });
 
       if (allowance >= needed) {
         // console.log('✅ Approval already sufficient, skipping');
@@ -668,9 +677,6 @@ export const TxOptions = () => {
       }
     }
 
-    // console.log('🔍 DEBUG: About to transform metadata for contract call');
-    // console.log('🔍 DEBUG: tokenApprovals before transform:', tokenApprovals);
-
     const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
       await Promise.all([
         transformToMetadata(checks.postTransfer, publicClient),
@@ -680,34 +686,6 @@ export const TxOptions = () => {
         transformToMetadata(tokenApprovals, publicClient),
         transformToMetadata(checks.withdrawals, publicClient),
       ]);
-
-    // 🔍 DEBUG: Log all parameters being sent to contract
-    // console.log('🔍 DEBUG: Contract call parameters:');
-    // console.log('Mode:', mode);
-    // console.log('Target (SwapRouter02):', tx.to);
-    // console.log('Proxy address:', proxy.address);
-    // console.log('Approvals array:', JSON.stringify(approvals.map(a => ({
-    //   target: a.balance.target,
-    //   token: a.balance.token,
-    //   balance: a.balance.balance.toString(),
-    //   symbol: a.symbol,
-    //   decimals: a.decimals,
-    // })), null, 2));
-    // console.log('Withdrawals array:', JSON.stringify(withdrawals.map(w => ({
-    //   target: w.balance.target,
-    //   token: w.balance.token,
-    //   balance: w.balance.balance.toString(),
-    //   symbol: w.symbol,
-    //   decimals: w.decimals,
-    // })), null, 2));
-    // console.log('Diffs array:', JSON.stringify(diffs.map(d => ({
-    //   target: d.balance.target,
-    //   token: d.balance.token,
-    //   balance: d.balance.balance.toString(),
-    //   symbol: d.symbol,
-    //   decimals: d.decimals,
-    // })), null, 2));
-    // console.log('ETH value:', value);
 
     try {
       let hash: `0x${string}` = '0x';
@@ -742,9 +720,7 @@ export const TxOptions = () => {
                 return '0x';
             }
           })(),
-          value: value
-            ? parseUnits(value.toString().replace(',', '.'), 18)
-            : 0n,
+          value: value || 0n,
         };
 
         const result = await safe.txs.send({
@@ -770,35 +746,18 @@ export const TxOptions = () => {
       } else {
         switch (mode) {
           case EMode.diifs: {
-            // console.log('🚀 Calling proxyCallMetadataCalldataDiffs with:', {
-            //   diffsCount: diffs.length,
-            //   approvalsCount: approvals.length,
-            //   withdrawalsCount: withdrawals.length,
-            //   target: tx.to,
-            // });
-
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
               functionName: 'proxyCallMetadataCalldataDiffs',
               args: [diffs, approvals, tx.to, data, withdrawals],
-              value: value
-                ? parseUnits(value.toString().replace(',', '.'), 18)
-                : undefined,
+              value: value,
             });
 
             break;
           }
 
           case EMode['pre/post']: {
-            // console.log('🚀 Calling proxyCallMetadataCalldata with:', {
-            //   postTransfersCount: postTransfers.length,
-            //   preTransfersCount: preTransfers.length,
-            //   approvalsCount: approvals.length,
-            //   withdrawalsCount: withdrawals.length,
-            //   target: tx.to,
-            // });
-
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
@@ -811,9 +770,7 @@ export const TxOptions = () => {
                 data,
                 withdrawals,
               ],
-              value: value
-                ? parseUnits(value.toString().replace(',', '.'), 18)
-                : undefined,
+              value: value,
             });
 
             break;
@@ -1019,11 +976,13 @@ export const TxOptions = () => {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
-              {checks.approvals.map((check) => (
-                <p key={check.token} className="text-lg font-bold">
-                  - {check.balance.toFixed(3)} {check.symbol}
-                </p>
-              ))}
+              {checks.approvals
+                .filter((check) => check.token != '')
+                .map((check) => (
+                  <p key={check.token} className="text-lg font-bold">
+                    - {check.balance.toFixed(3)} {check.symbol}
+                  </p>
+                ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
