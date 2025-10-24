@@ -203,8 +203,8 @@ export function ImpersonatorIframe() {
           try {
             console.log('signTypedMessage > ', params);
             const { typedData } = params as any;
-            const data = await walletClient.signTypedData(typedData);
-            sendMessageToIFrame({ eventID, data });
+            const data = {signature:  await walletClient.signTypedData(typedData)}
+            sendMessageToIFrame({ eventID, data});
             return;
           } catch (error) {
             console.log('event > signTypedMessage > error', error);
