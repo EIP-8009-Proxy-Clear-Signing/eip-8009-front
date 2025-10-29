@@ -679,70 +679,130 @@ export const TxOptions = () => {
           console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
           console.log(`Has WRAP_ETH: ${hasWrapEth}`);
           
-          // If has WRAP_ETH, remove it (we're pre-transferring tokens instead)
-          if (hasWrapEth) {
-            const wrapEthIndex = newCommands.indexOf(0x0b);
-            console.log(`🗑️  Removing WRAP_ETH command at index ${wrapEthIndex}`);
-            newCommands.splice(wrapEthIndex, 1);
-            newInputs.splice(wrapEthIndex, 1);
-          }
+          // DON'T remove WRAP_ETH - it's needed to wrap ETH sent with the transaction!
+          // WRAP_ETH is only present when user is sending ETH (not tokens)
+          // In this case, there's no pre-transfer needed, ETH comes with tx.value
           
-          // Find V3_SWAP_EXACT_IN (0x00) and modify its input
-          const v3SwapIndex = newCommands.indexOf(0x00);
-          
-          if (v3SwapIndex !== -1 && newInputs[v3SwapIndex]) {
-            console.log(`🔄 Modifying V3_SWAP_EXACT_IN at index ${v3SwapIndex}`);
+          // Modify V3 swap commands (V3_SWAP_EXACT_IN and V3_SWAP_EXACT_OUT)
+          // Both have the same structure: (recipient, amount1, amount2, path, payerIsUser)
+          for (let i = 0; i < newCommands.length; i++) {
+            const command = newCommands[i];
             
-            const swapInput = newInputs[v3SwapIndex];
-            const inputData = '0x' + swapInput.slice(2);
-            
-            // Parse current values
-            const recipient = '0x' + inputData.slice(2, 66).slice(24);
-            const amountIn = '0x' + inputData.slice(66, 130);
-            const amountOutMin = '0x' + inputData.slice(130, 194);
-            const pathOffset = '0x' + inputData.slice(194, 258);
-            const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
-            
-            console.log('Old recipient:', recipient);
-            console.log('Old payerIsUser:', payerIsUserOld);
-            
-            // Get the actual path data
-            const pathOffsetInt = parseInt(pathOffset, 16);
-            const pathLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
-            const pathLength = parseInt(pathLengthHex, 16);
-            const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
-            
-            // Construct new input with:
-            // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
-            // 2. payerIsUser = false (always, since we're pre-transferring)
-            let newRecipient: string;
-            if (hasUnwrapWeth) {
-              // Keep recipient as MSG_SENDER (0x02) or router address
-              // UNWRAP_WETH will handle sending ETH to user
-              newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
-              console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
-            } else {
-              // No UNWRAP_WETH, send directly to user
-              newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
-              console.log('New recipient:', '0x' + newRecipient.slice(24));
+            // V3_SWAP_EXACT_IN (0x00) or V3_SWAP_EXACT_OUT (0x01)
+            if (command === 0x00 || command === 0x01) {
+              const commandName = command === 0x00 ? 'V3_SWAP_EXACT_IN' : 'V3_SWAP_EXACT_OUT';
+              console.log(`🔄 Modifying ${commandName} at index ${i}`);
+              
+              const swapInput = newInputs[i];
+              const inputData = '0x' + swapInput.slice(2);
+              
+              // Parse current values
+              // Structure for both: (address recipient, uint256 amount1, uint256 amount2, bytes path, bool payerIsUser)
+              const recipient = '0x' + inputData.slice(2, 66).slice(24);
+              const amount1 = '0x' + inputData.slice(66, 130);
+              const amount2 = '0x' + inputData.slice(130, 194);
+              const pathOffset = '0x' + inputData.slice(194, 258);
+              const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
+              
+              console.log('Old recipient:', recipient);
+              console.log('Old payerIsUser:', payerIsUserOld);
+              
+              // Get the actual path data
+              const pathOffsetInt = parseInt(pathOffset, 16);
+              const pathLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
+              const pathLength = parseInt(pathLengthHex, 16);
+              const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
+              
+              // Construct new input with:
+              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 2. payerIsUser = false (always, since we're pre-transferring)
+              let newRecipient: string;
+              if (hasUnwrapWeth) {
+                // Keep recipient as MSG_SENDER (0x02) or router address
+                // UNWRAP_WETH will handle sending ETH to user
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
+                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              } else {
+                // No UNWRAP_WETH, send directly to user
+                newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+                console.log('New recipient:', '0x' + newRecipient.slice(24));
+              }
+              const newPayerIsUser = '0'.padStart(64, '0'); // false
+              
+              console.log('New payerIsUser:', false);
+              
+              // Reconstruct the input
+              // Structure: recipient (32 bytes) + amount1 (32 bytes) + amount2 (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + path
+              const newInput = '0x' + 
+                newRecipient + 
+                amount1.slice(2) + 
+                amount2.slice(2) + 
+                pathOffset.slice(2) + 
+                newPayerIsUser + 
+                pathLengthHex + 
+                pathData;
+              
+              newInputs[i] = newInput;
+              console.log(`✅ Modified ${commandName} input`);
             }
-            const newPayerIsUser = '0'.padStart(64, '0'); // false
             
-            console.log('New payerIsUser:', false);
-            
-            // Reconstruct the input
-            // Structure: recipient (32 bytes) + amountIn (32 bytes) + amountOutMin (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + path
-            const newInput = '0x' + 
-              newRecipient + 
-              amountIn.slice(2) + 
-              amountOutMin.slice(2) + 
-              pathOffset.slice(2) + 
-              newPayerIsUser + 
-              pathLengthHex + 
-              pathData;
-            
-            newInputs[v3SwapIndex] = newInput;
-            console.log('✅ Modified V3_SWAP_EXACT_IN input');
+            // V2_SWAP_EXACT_IN (0x08) or V2_SWAP_EXACT_OUT (0x09)
+            if (command === 0x08 || command === 0x09) {
+              const commandName = command === 0x08 ? 'V2_SWAP_EXACT_IN' : 'V2_SWAP_EXACT_OUT';
+              console.log(`🔄 Modifying ${commandName} at index ${i}`);
+              
+              const swapInput = newInputs[i];
+              const inputData = '0x' + swapInput.slice(2);
+              
+              // Parse current values
+              // Structure for both: (address recipient, uint256 amount1, uint256 amount2, address[] path, bool payerIsUser)
+              const recipient = '0x' + inputData.slice(2, 66).slice(24);
+              const amount1 = '0x' + inputData.slice(66, 130);
+              const amount2 = '0x' + inputData.slice(130, 194);
+              const pathOffset = '0x' + inputData.slice(194, 258);
+              const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
+              
+              console.log('Old recipient:', recipient);
+              console.log('Old payerIsUser:', payerIsUserOld);
+              
+              // Get the actual path data (address[] array)
+              const pathOffsetInt = parseInt(pathOffset, 16);
+              const pathArrayLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
+              const pathArrayLength = parseInt(pathArrayLengthHex, 16);
+              const pathArrayData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64);
+              
+              // Construct new input with:
+              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 2. payerIsUser = false (always, since we're pre-transferring)
+              let newRecipient: string;
+              if (hasUnwrapWeth) {
+                // Keep recipient as MSG_SENDER (0x02) or router address
+                // UNWRAP_WETH will handle sending ETH to user
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
+                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              } else {
+                // No UNWRAP_WETH, send directly to user
+                newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+                console.log('New recipient:', '0x' + newRecipient.slice(24));
+              }
+              const newPayerIsUser = '0'.padStart(64, '0'); // false
+              
+              console.log('New payerIsUser:', false);
+              
+              // Reconstruct the input
+              // Structure: recipient (32 bytes) + amount1 (32 bytes) + amount2 (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + pathArray
+              const newInput = '0x' + 
+                newRecipient + 
+                amount1.slice(2) + 
+                amount2.slice(2) + 
+                pathOffset.slice(2) + 
+                newPayerIsUser + 
+                pathArrayLengthHex + 
+                pathArrayData;
+              
+              newInputs[i] = newInput;
+              console.log(`✅ Modified ${commandName} input`);
+            }
           }
           
           // Encode new commands bytes
@@ -948,7 +1008,30 @@ export const TxOptions = () => {
     }
 
     // Pre-transfer tokens to Universal Router if needed (payerIsUser = false)
-    if (isUniversalRouter && tokenApprovals.length > 0) {
+    // Skip if transaction has WRAP_ETH command (ETH input - comes with tx.value)
+    let hasWrapEthCommand = false;
+    if (isUniversalRouter) {
+      try {
+        const decoded = decodeFunctionData({
+          abi: uniswapRouter.abi,
+          data: tx.data as `0x${string}`,
+        });
+        if (decoded.functionName === 'execute' && decoded.args) {
+          const [commands] = decoded.args as [string, string[], bigint];
+          const commandBytes = commands.slice(2);
+          for (let i = 0; i < commandBytes.length; i += 2) {
+            if (parseInt(commandBytes.substr(i, 2), 16) === 0x0b) {
+              hasWrapEthCommand = true;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Ignore decode errors
+      }
+    }
+    
+    if (isUniversalRouter && tokenApprovals.length > 0 && !hasWrapEthCommand) {
       console.group('💸 Checking Universal Router token balances');
       
       for (const token of tokenApprovals) {
@@ -1024,34 +1107,49 @@ export const TxOptions = () => {
       console.groupEnd();
     }
 
-    // For Universal Router with pre-transfer, we need to adjust checks:
-    // - No approvals needed (tokens already transferred to router)
-    // - Input token balance already changed during pre-transfer
+    // For Universal Router, we need to adjust checks:
+    // - No approvals needed (tokens pre-transferred or ETH sent with tx.value)
+    // - Input token balance already changed during pre-transfer (or ETH with tx.value)
     // - Only output token balance will change during proxy execution
-    // - No withdrawals needed (diffs check is sufficient)
+    // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
     let diffsToUse = checks.diffs;
     let approvalsToUse = tokenApprovals;
     let withdrawalsToUse = checks.withdrawals;
     
-    if (isUniversalRouter && tokenApprovals.length > 0) {
-      console.log('🔧 Adjusting checks for Universal Router pre-transfer');
+    if (isUniversalRouter) {
+      console.log('🔧 Adjusting checks for Universal Router');
       console.log('Original diffs:', checks.diffs);
       console.log('Original approvals:', tokenApprovals);
       console.log('Original withdrawals:', checks.withdrawals);
+      console.log('Has WRAP_ETH:', hasWrapEthCommand);
       
-      // No approval checks needed - tokens are already in the router
-      approvalsToUse = [];
+      if (hasWrapEthCommand) {
+        // ETH input: No pre-transfer, ETH comes with tx.value
+        // No approval checks needed
+        approvalsToUse = [];
+        
+        // Keep all diffs (ETH decrease will be from tx.value, not from balance change)
+        // Filter to only positive diffs (output token increase)
+        diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
+        
+        // No withdrawal checks - proxy doesn't hold the tokens
+        withdrawalsToUse = [];
+      } else {
+        // Token input: Pre-transferred to router
+        // No approval checks needed - tokens are already in the router
+        approvalsToUse = [];
+        
+        // Filter out negative diffs (input tokens) - their balance already changed
+        diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
+        
+        // No withdrawal checks needed for any token - diffs check is sufficient
+        // Withdrawal checks try to send tokens which the proxy doesn't have
+        withdrawalsToUse = [];
+      }
       
-      // Filter out negative diffs (input tokens) - their balance already changed
-      diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
-      
-      // No withdrawal checks needed for ETH - diffs check is sufficient
-      // Withdrawal checks try to send ETH which the proxy doesn't have
-      withdrawalsToUse = checks.withdrawals.filter(w => w.token !== zeroAddress && w.token !== ethAddress);
-      
-      console.log('Adjusted approvals (none):', approvalsToUse);
+      console.log('Adjusted approvals:', approvalsToUse);
       console.log('Adjusted diffs (output only):', diffsToUse);
-      console.log('Adjusted withdrawals (no ETH):', withdrawalsToUse);
+      console.log('Adjusted withdrawals:', withdrawalsToUse);
     }
 
     const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
