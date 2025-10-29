@@ -38,6 +38,7 @@ import {
   encodeFunctionData,
   erc20Abi,
   ethAddress,
+  formatUnits,
   parseAbi,
   parseUnits,
   PublicClient,
@@ -658,15 +659,32 @@ export const TxOptions = () => {
           console.log('Original commands:', commandList.map(c => '0x' + c.toString(16).padStart(2, '0')));
           console.log('Original inputs count:', inputs.length);
           
-          // Find and remove PERMIT2_PERMIT (0x0a) command
-          const permit2PermitIndex = commandList.indexOf(0x0a);
           const newCommands = [...commandList];
           const newInputs = [...inputs];
           
+          // Find and remove PERMIT2_PERMIT (0x0a) command
+          const permit2PermitIndex = commandList.indexOf(0x0a);
           if (permit2PermitIndex !== -1) {
             console.log(`🗑️  Removing PERMIT2_PERMIT command at index ${permit2PermitIndex}`);
             newCommands.splice(permit2PermitIndex, 1);
             newInputs.splice(permit2PermitIndex, 1);
+          }
+          
+          // Check if there's an UNWRAP_WETH (0x0c) command
+          // If present, keep swap recipient as router so UNWRAP_WETH can work
+          // If not present, set swap recipient to user
+          const hasUnwrapWeth = newCommands.indexOf(0x0c) !== -1;
+          const hasWrapEth = newCommands.indexOf(0x0b) !== -1;
+          
+          console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
+          console.log(`Has WRAP_ETH: ${hasWrapEth}`);
+          
+          // If has WRAP_ETH, remove it (we're pre-transferring tokens instead)
+          if (hasWrapEth) {
+            const wrapEthIndex = newCommands.indexOf(0x0b);
+            console.log(`🗑️  Removing WRAP_ETH command at index ${wrapEthIndex}`);
+            newCommands.splice(wrapEthIndex, 1);
+            newInputs.splice(wrapEthIndex, 1);
           }
           
           // Find V3_SWAP_EXACT_IN (0x00) and modify its input
@@ -695,12 +713,21 @@ export const TxOptions = () => {
             const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
             
             // Construct new input with:
-            // 1. Recipient = user address (not MSG_SENDER flag)
-            // 2. payerIsUser = false
-            const newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+            // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+            // 2. payerIsUser = false (always, since we're pre-transferring)
+            let newRecipient: string;
+            if (hasUnwrapWeth) {
+              // Keep recipient as MSG_SENDER (0x02) or router address
+              // UNWRAP_WETH will handle sending ETH to user
+              newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
+              console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+            } else {
+              // No UNWRAP_WETH, send directly to user
+              newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+              console.log('New recipient:', '0x' + newRecipient.slice(24));
+            }
             const newPayerIsUser = '0'.padStart(64, '0'); // false
             
-            console.log('New recipient:', '0x' + newRecipient.slice(24));
             console.log('New payerIsUser:', false);
             
             // Reconstruct the input
@@ -922,7 +949,7 @@ export const TxOptions = () => {
 
     // Pre-transfer tokens to Universal Router if needed (payerIsUser = false)
     if (isUniversalRouter && tokenApprovals.length > 0) {
-      console.group('💸 Pre-transferring tokens to Universal Router');
+      console.group('💸 Checking Universal Router token balances');
       
       for (const token of tokenApprovals) {
         if (
@@ -934,13 +961,33 @@ export const TxOptions = () => {
           continue;
         }
         
+        const decimals = token.decimals || 18;
         const amount = parseUnits(
           token.balance.toString().replace(',', '.'),
-          token.decimals
+          decimals
         );
         
-        console.log(`Transferring ${token.balance} ${token.symbol} to Universal Router...`);
-        console.log(`Amount (wei):`, amount.toString());
+        // Check current balance of Universal Router
+        const routerBalance = await publicClient.readContract({
+          abi: erc20Abi,
+          address: token.token as `0x${string}`,
+          functionName: 'balanceOf',
+          args: [uniswapRouter.address as `0x${string}`],
+        });
+        
+        console.log(`${token.symbol} balance check:`);
+        console.log(`  Router has: ${routerBalance.toString()} wei`);
+        console.log(`  Swap needs: ${amount.toString()} wei`);
+        
+        if (routerBalance >= amount) {
+          console.log(`✅ Router already has enough ${token.symbol}, skipping pre-transfer`);
+          continue;
+        }
+        
+        const amountToTransfer = amount - routerBalance;
+        console.log(`📤 Need to transfer: ${amountToTransfer.toString()} wei (${formatUnits(amountToTransfer, decimals)} ${token.symbol})`);
+        
+        console.log(`Transferring ${formatUnits(amountToTransfer, decimals)} ${token.symbol} to Universal Router...`);
         console.log(`Token:`, token.token);
         console.log(`To:`, uniswapRouter.address);
         
@@ -949,7 +996,7 @@ export const TxOptions = () => {
             abi: erc20Abi,
             address: token.token as `0x${string}`,
             functionName: 'transfer',
-            args: [uniswapRouter.address as `0x${string}`, amount],
+            args: [uniswapRouter.address as `0x${string}`, amountToTransfer],
           });
           
           console.log(`Transfer transaction sent:`, hash);
@@ -962,7 +1009,7 @@ export const TxOptions = () => {
             hash,
             status: receipt.status,
             token: token.symbol,
-            amount: token.balance,
+            amount: formatUnits(amountToTransfer, decimals),
           });
           
         } catch (error) {
@@ -977,14 +1024,44 @@ export const TxOptions = () => {
       console.groupEnd();
     }
 
+    // For Universal Router with pre-transfer, we need to adjust checks:
+    // - No approvals needed (tokens already transferred to router)
+    // - Input token balance already changed during pre-transfer
+    // - Only output token balance will change during proxy execution
+    // - No withdrawals needed (diffs check is sufficient)
+    let diffsToUse = checks.diffs;
+    let approvalsToUse = tokenApprovals;
+    let withdrawalsToUse = checks.withdrawals;
+    
+    if (isUniversalRouter && tokenApprovals.length > 0) {
+      console.log('🔧 Adjusting checks for Universal Router pre-transfer');
+      console.log('Original diffs:', checks.diffs);
+      console.log('Original approvals:', tokenApprovals);
+      console.log('Original withdrawals:', checks.withdrawals);
+      
+      // No approval checks needed - tokens are already in the router
+      approvalsToUse = [];
+      
+      // Filter out negative diffs (input tokens) - their balance already changed
+      diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
+      
+      // No withdrawal checks needed for ETH - diffs check is sufficient
+      // Withdrawal checks try to send ETH which the proxy doesn't have
+      withdrawalsToUse = checks.withdrawals.filter(w => w.token !== zeroAddress && w.token !== ethAddress);
+      
+      console.log('Adjusted approvals (none):', approvalsToUse);
+      console.log('Adjusted diffs (output only):', diffsToUse);
+      console.log('Adjusted withdrawals (no ETH):', withdrawalsToUse);
+    }
+
     const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
       await Promise.all([
         transformToMetadata(checks.postTransfer, publicClient),
         transformToMetadata(checks.preTransfer, publicClient),
 
-        transformToMetadata(checks.diffs, publicClient),
-        transformToMetadata(tokenApprovals, publicClient),
-        transformToMetadata(checks.withdrawals, publicClient),
+        transformToMetadata(diffsToUse, publicClient),
+        transformToMetadata(approvalsToUse, publicClient),
+        transformToMetadata(withdrawalsToUse, publicClient),
       ]);
 
     try {
@@ -1052,6 +1129,7 @@ export const TxOptions = () => {
               functionName: 'proxyCallMetadataCalldataDiffs',
               args: [diffs, approvals, tx.to, data, withdrawals],
               value: value,
+              maxFeePerGas: 200_000n,
             });
 
             break;
