@@ -36,6 +36,8 @@ import {
   Abi,
   decodeFunctionData,
   encodeFunctionData,
+  encodeAbiParameters,
+  decodeAbiParameters,
   erc20Abi,
   ethAddress,
   formatUnits,
@@ -561,7 +563,7 @@ export const TxOptions = () => {
             0x0b: 'WRAP_ETH',
             0x0c: 'UNWRAP_WETH',
             0x0d: 'PERMIT2_TRANSFER_FROM_BATCH',
-            0x10: 'SEAPORT',
+            0x10: 'V4_SWAP',
             0x11: 'LOOKS_RARE_721',
           };
           
@@ -679,14 +681,168 @@ export const TxOptions = () => {
           console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
           console.log(`Has WRAP_ETH: ${hasWrapEth}`);
           
-          // DON'T remove WRAP_ETH - it's needed to wrap ETH sent with the transaction!
-          // WRAP_ETH is only present when user is sending ETH (not tokens)
-          // In this case, there's no pre-transfer needed, ETH comes with tx.value
-          
-          // Modify V3 swap commands (V3_SWAP_EXACT_IN and V3_SWAP_EXACT_OUT)
-          // Both have the same structure: (recipient, amount1, amount2, path, payerIsUser)
+          // Modify swap commands to use pre-transferred tokens
           for (let i = 0; i < newCommands.length; i++) {
             const command = newCommands[i];
+            
+            // V4_SWAP (0x10) - Handle nested action plan
+            if (command === 0x10) {
+              console.log('🔵 Modifying V4_SWAP at index', i);
+              
+              try {
+                const v4Input = newInputs[i];
+                
+                // V4 input structure: abi.encode(bytes actions, bytes[] params)
+                // This is encoded as two top-level parameters, not nested
+                
+                console.log('V4 input (first 400 chars):', v4Input.slice(0, 400));
+                
+                // Decode the V4 plan: (bytes actions, bytes[] params)
+                // Actions is a bytes string where each byte is an action ID
+                // Params is an array of bytes, one for each action
+                const planDecoded = decodeAbiParameters(
+                  [
+                    { name: 'actions', type: 'bytes' },
+                    { name: 'params', type: 'bytes[]' }
+                  ],
+                  v4Input as `0x${string}`
+                );
+                
+                const actionsBytes = planDecoded[0];
+                const params = planDecoded[1];
+                
+                console.log('Actions bytes:', actionsBytes);
+                console.log('Params count:', params.length);
+                
+                // Parse actions
+                const actions: number[] = [];
+                const actionsHex = actionsBytes.slice(2); // Remove 0x
+                for (let j = 0; j < actionsHex.length; j += 2) {
+                  actions.push(parseInt(actionsHex.slice(j, j + 2), 16));
+                }
+                
+                console.log('V4 Actions:', actions.map(a => `0x${a.toString(16).padStart(2, '0')}`));
+                
+                // V4 Action IDs (from v4-periphery Actions.sol)
+                // Correct action IDs based on actual v4-periphery implementation:
+                const V4_ACTIONS = {
+                  SWAP_EXACT_IN_SINGLE: 0x06,
+                  SWAP_EXACT_IN: 0x07,
+                  SWAP_EXACT_OUT_SINGLE: 0x08,
+                  SWAP_EXACT_OUT: 0x09,
+                  SETTLE: 0x0b,           // ← CORRECT ID!
+                  SETTLE_ALL: 0x0c,
+                  SETTLE_PAIR: 0x0d,
+                  TAKE: 0x0e,
+                  TAKE_ALL: 0x0f,
+                  TAKE_PORTION: 0x10,
+                  TAKE_PAIR: 0x11,
+                };
+                
+                // Modify SETTLE actions to use router's balance instead of Permit2
+                const modifiedParams: `0x${string}`[] = [];
+                let modified = false;
+                
+                for (let j = 0; j < actions.length; j++) {
+                  const action = actions[j];
+                  const param = params[j];
+                  
+                  console.log(`Action ${j}: 0x${action.toString(16).padStart(2, '0')}, param length: ${param.length}`);
+                  
+                  // Check if this is a SETTLE action that needs modification
+                  // SETTLE action structure: (Currency currency, uint256 amount, bool payerIsUser)
+                  if (action === V4_ACTIONS.SETTLE) {
+                    console.log(`  → Found SETTLE action (0x0b), attempting to modify payerIsUser`);
+                    
+                    try {
+                      // Decode SETTLE params: (address currency, uint256 amount, bool payerIsUser)
+                      const settleParams = decodeAbiParameters(
+                        [
+                          { name: 'currency', type: 'address' },
+                          { name: 'amount', type: 'uint256' },
+                          { name: 'payerIsUser', type: 'bool' }
+                        ],
+                        param as `0x${string}`
+                      );
+                      
+                      const [currency, amount, payerIsUser] = settleParams;
+                      console.log('  → Original SETTLE params:', {
+                        currency,
+                        amount: amount.toString(),
+                        payerIsUser
+                      });
+                      
+                      // Re-encode with payerIsUser = false
+                      const newParam = encodeAbiParameters(
+                        [
+                          { name: 'currency', type: 'address' },
+                          { name: 'amount', type: 'uint256' },
+                          { name: 'payerIsUser', type: 'bool' }
+                        ],
+                        [currency, amount, false]  // ← Change payerIsUser to false
+                      );
+                      
+                      modifiedParams.push(newParam);
+                      modified = true;
+                      console.log('  → Modified payerIsUser from', payerIsUser, 'to false ✅');
+                      
+                    } catch (error) {
+                      console.error('  → Failed to decode/modify SETTLE action:', error);
+                      console.error('  → Param data:', param);
+                      // Keep original param as fallback
+                      modifiedParams.push(param as `0x${string}`);
+                    }
+                  }
+                  // SETTLE_ALL action: (Currency currency, uint256 maxAmount)
+                  // Note: SETTLE_ALL doesn't have payerIsUser, it always uses payer from context
+                  else if (action === V4_ACTIONS.SETTLE_ALL) {
+                    console.log('  → Found SETTLE_ALL action (0x0c) - no modification needed');
+                    modifiedParams.push(param as `0x${string}`);
+                  }
+                  // SETTLE_PAIR action: (Currency currency0, Currency currency1)
+                  else if (action === V4_ACTIONS.SETTLE_PAIR) {
+                    console.log('  → Found SETTLE_PAIR action (0x0d) - no modification needed');
+                    modifiedParams.push(param as `0x${string}`);
+                  }
+                  else {
+                    // Other actions (SWAP, TAKE, etc.) - keep as-is
+                    console.log(`  → Action 0x${action.toString(16).padStart(2, '0')} - keeping unchanged`);
+                    modifiedParams.push(param as `0x${string}`);
+                  }
+                }
+                
+                if (modified) {
+                  console.log('✅ Modified V4 plan, re-encoding...');
+                  
+                  // Re-encode the plan with modified params
+                  const newV4Input = encodeAbiParameters(
+                    [
+                      { name: 'actions', type: 'bytes' },
+                      { name: 'params', type: 'bytes[]' }
+                    ],
+                    [actionsBytes, modifiedParams]
+                  );
+                  
+                  newInputs[i] = newV4Input;
+                  console.log('✅ V4_SWAP modified successfully');
+                  console.log('New V4 input length:', newV4Input.length);
+                  
+                } else {
+                  console.warn('⚠️ No SETTLE actions found or modified in V4 plan');
+                  console.warn('⚠️ Transaction may fail - V4 will try to use Permit2');
+                  toast.error('V4 transaction may fail: No SETTLE actions could be modified for pre-transfer.');
+                }
+                
+              } catch (error) {
+                console.error('❌ Failed to process V4_SWAP:', error);
+                console.error('Error details:', error);
+                toast.error('Failed to process V4 swap. The transaction may still work with pre-transfer.');
+                // Don't return - let it continue with unmodified input
+              }
+              
+              // Continue to next command
+              continue;
+            }
             
             // V3_SWAP_EXACT_IN (0x00) or V3_SWAP_EXACT_OUT (0x01)
             if (command === 0x00 || command === 0x01) {
