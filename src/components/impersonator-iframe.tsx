@@ -24,10 +24,9 @@ export function ImpersonatorIframe() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { address, chainId } = useAccount();
   const { data: walletClient } = useWalletClient();
-  const [url, setUrl] = useState(
-    'https://uniswap-eip.ilya-kubariev.workers.dev/#/swap'
-  );
   const [iframeKey, setIframeKey] = useState(0);
+  // const [url, setUrl] = useState('https://uniswap-eip.ilya-kubariev.workers.dev/#/swap');
+  const [url, setUrl] = useState('https://app.uniswap.org/swap');
   // const [url, setUrl] = useState('http://localhost:3000/swap');
   const [deferredUrl] = useDebounce(url, 500);
   const publicClient = usePublicClient();
@@ -204,8 +203,8 @@ export function ImpersonatorIframe() {
           try {
             console.log('signTypedMessage > ', params);
             const { typedData } = params as any;
-            const data = await walletClient.signTypedData(typedData);
-            sendMessageToIFrame({ eventID, data });
+            const data = {signature:  await walletClient.signTypedData(typedData)}
+            sendMessageToIFrame({ eventID, data});
             return;
           } catch (error) {
             console.log('event > signTypedMessage > error', error);

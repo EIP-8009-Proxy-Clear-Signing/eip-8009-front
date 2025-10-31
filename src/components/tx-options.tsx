@@ -31,13 +31,16 @@ import {
   usePublicClient,
   useWriteContract,
 } from 'wagmi';
-import { getProxyContract } from '@/lib/contracts';
+import { getProxyContract, getUniswapRouterContract } from '@/lib/contracts';
 import {
   Abi,
   decodeFunctionData,
   encodeFunctionData,
+  encodeAbiParameters,
+  decodeAbiParameters,
   erc20Abi,
   ethAddress,
+  formatUnits,
   parseAbi,
   parseUnits,
   PublicClient,
@@ -274,19 +277,55 @@ export const TxOptions = () => {
   ]);
 
   const setDataToForm = async () => {
-    if (!publicClient || tx === null) return;
+    if (!publicClient || tx === null) {
+      return;
+    }
 
-    const simRes = await publicClient.simulateCalls({
-      traceAssetChanges: true,
-      account: address,
-      calls: [
-        {
-          to: tx.to as `0x${string}`,
-          data: tx.data as `0x${string}`,
-          value: BigInt(tx.value || 0),
-        },
-      ],
-    });
+    let simRes;
+    try {
+      simRes = await publicClient.simulateCalls({
+        traceAssetChanges: true,
+        account: address,
+        calls: [
+          {
+            to: tx.to as `0x${string}`,
+            data: tx.data as `0x${string}`,
+            value: BigInt(tx.value || 0),
+          },
+        ],
+      });
+    } catch (error) {
+      console.warn('⚠️ Simulation failed:', error);
+      console.log(
+        '💡 Please manually configure approval and withdrawal checks'
+      );
+
+      // Create empty checks for manual configuration
+      if (!checks.approvals.length) {
+        createApprovalCheck();
+      }
+      if (!checks.withdrawals.length) {
+        createWithdrawalCheck();
+      }
+
+      switch (mode) {
+        case 'diifs': {
+          if (!checks.diffs.length) {
+            createDiffsCheck();
+            createDiffsCheck();
+          }
+          break;
+        }
+        case EMode['pre/post']: {
+          if (!checks.postTransfer.length) {
+            createPostTransferCheck();
+          }
+          break;
+        }
+      }
+
+      return; // Exit early if simulation fails
+    }
 
     const from = simRes.assetChanges.find((asset) => {
       if (0 > asset.value.diff) {
@@ -302,7 +341,13 @@ export const TxOptions = () => {
 
     // console.log('FROM > TO', from, to);
 
-    if (!checks.approvals.length) {
+    // Detect if input is ETH before creating checks
+    const isFromEth =
+      from?.token.address === zeroAddress || from?.token.address === ethAddress;
+    // const isFromEth = false;
+
+    // Only create approval check for non-ETH tokens
+    if (!checks.approvals.length && !isFromEth) {
       createApprovalCheck();
     }
 
@@ -312,8 +357,14 @@ export const TxOptions = () => {
 
     switch (mode) {
       case 'diifs': {
+        // Create first diff check (always needed for output token)
         if (!checks.diffs.length) {
           createDiffsCheck();
+        }
+
+        // Only create second diff check if input is not ETH
+        // (ETH is handled via transaction value)
+        if (checks.diffs.length < 2 && !isFromEth) {
           createDiffsCheck();
         }
         break;
@@ -330,10 +381,7 @@ export const TxOptions = () => {
     let appSymbol = 'ETH';
     let appDecimals = 18;
 
-    if (
-      from?.token.address !== zeroAddress &&
-      from?.token.address !== ethAddress
-    ) {
+    if (!isFromEth) {
       [appSymbol, appDecimals] = await publicClient.multicall({
         contracts: [
           {
@@ -352,23 +400,13 @@ export const TxOptions = () => {
         allowFailure: false,
       });
     }
-
     // Add 0.1% buffer to account for precision loss in number conversion
-    const rawApprovalAmount = Math.abs(Number(from?.value.diff || 0n));
     const approvalBalance =
       formatBalance(from?.value.diff, from?.token.decimals) * 1.001;
 
-    console.log('🔍 DEBUG: Setting approval check:', {
-      target: tx.to,
-      token: formatToken(from?.token.symbol, from?.token.address),
-      balance: approvalBalance,
-      rawDiff: from?.value.diff?.toString(),
-      rawApprovalAmount,
-      symbol: appSymbol,
-      decimals: appDecimals,
-      note: 'Added 0.1% buffer for precision loss',
-    });
-
+    // Only set approval check for non-ETH tokens
+    // ETH is sent via transaction value, not approvals
+    // if (!isFromEth) {
     changeApprovalCheck(0, {
       target: tx.to,
       token: formatToken(from?.token.symbol, from?.token.address),
@@ -376,6 +414,7 @@ export const TxOptions = () => {
       symbol: appSymbol,
       decimals: appDecimals,
     });
+    // }
 
     let withSymbol = 'ETH';
     let withDecimals = 18;
@@ -420,18 +459,23 @@ export const TxOptions = () => {
             (1 - slippage / 100),
         });
 
-        // Use the same calculation as approvals to avoid precision mismatch
-        const inputDiffBalance = -(
+        // Only add input diff if it's not ETH with negative value
+        // ETH being sent should be handled via transaction value, not diffs
+        const isEthInput =
+          from?.token.address === zeroAddress ||
+          from?.token.address === ethAddress;
+        const inputBalance = -(
           formatBalance(from?.value.diff, from?.token.decimals) *
-          1.001 * // 0.1% buffer for precision loss
           (1 + slippage / 100)
         );
 
-        changeDiffsCheck(1, {
-          target: String(address),
-          token: formatToken(from?.token.symbol, from?.token.address),
-          balance: inputDiffBalance,
-        });
+        if (!isEthInput || inputBalance >= 0) {
+          changeDiffsCheck(1, {
+            target: String(address),
+            token: formatToken(from?.token.symbol, from?.token.address),
+            balance: inputBalance,
+          });
+        }
 
         break;
       }
@@ -450,7 +494,7 @@ export const TxOptions = () => {
       }
     }
   };
-
+  
   useEffect(() => {
     setDataToForm();
   }, [tx, address, slippage, mode]);
@@ -464,13 +508,496 @@ export const TxOptions = () => {
     }
 
     const proxy = getProxyContract(chainId);
+    const uniswapRouter = getUniswapRouterContract(chainId);
+    
+    // Check if this is a Universal Router transaction
+    const isUniversalRouter = tx.to?.toLowerCase() === uniswapRouter.address.toLowerCase();
+    
+    if (isUniversalRouter) {
+      console.group('🔍 Universal Router Transaction Debug');
+      console.log('Transaction to:', tx.to);
+      console.log('Transaction data:', tx.data);
+      console.log('Transaction value:', tx.value);
+      
+      try {
+        // Decode Universal Router calldata
+        const decoded = decodeFunctionData({
+          abi: uniswapRouter.abi,
+          data: tx.data as `0x${string}`,
+        });
+        
+        console.log('📦 Decoded function:', decoded.functionName);
+        console.log('📦 Decoded args:', decoded.args);
+        
+        // Parse execute() function - format: execute(bytes commands, bytes[] inputs, uint256 deadline)
+        if (decoded.functionName === 'execute' && decoded.args) {
+          const [commands, inputs, deadline] = decoded.args as [string, string[], bigint];
+          
+          console.log('🎯 Commands (hex):', commands);
+          console.log('🎯 Number of commands:', (commands.length - 2) / 2); // Remove 0x and divide by 2
+          console.log('🎯 Inputs array length:', inputs.length);
+          console.log('🎯 Deadline:', deadline);
+          
+          // Parse each command byte
+          const commandBytes = commands.slice(2); // Remove 0x
+          const commandList = [];
+          for (let i = 0; i < commandBytes.length; i += 2) {
+            const commandByte = parseInt(commandBytes.substr(i, 2), 16);
+            commandList.push(commandByte);
+          }
+          
+          console.log('🎯 Command bytes:', commandList);
+          
+          // Map command bytes to names
+          const COMMAND_NAMES: { [key: number]: string } = {
+            0x00: 'V3_SWAP_EXACT_IN',
+            0x01: 'V3_SWAP_EXACT_OUT',
+            0x02: 'PERMIT2_TRANSFER_FROM',
+            0x03: 'PERMIT2_PERMIT_BATCH',
+            0x04: 'SWEEP',
+            0x05: 'TRANSFER',
+            0x06: 'PAY_PORTION',
+            0x08: 'V2_SWAP_EXACT_IN',
+            0x09: 'V2_SWAP_EXACT_OUT',
+            0x0a: 'PERMIT2_PERMIT',
+            0x0b: 'WRAP_ETH',
+            0x0c: 'UNWRAP_WETH',
+            0x0d: 'PERMIT2_TRANSFER_FROM_BATCH',
+            0x10: 'V4_SWAP',
+            0x11: 'LOOKS_RARE_721',
+          };
+          
+          console.group('📋 Commands breakdown:');
+          commandList.forEach((cmd, idx) => {
+            console.log(`  ${idx}: 0x${cmd.toString(16).padStart(2, '0')} - ${COMMAND_NAMES[cmd] || 'UNKNOWN'}`);
+          });
+          console.groupEnd();
+          
+          // Log each input
+          console.group('📋 Inputs breakdown:');
+          inputs.forEach((input, idx) => {
+            console.log(`  Input ${idx}:`, input);
+            console.log(`    Length: ${input.length} characters`);
+          });
+          console.groupEnd();
+          
+          // Try to decode V3_SWAP_EXACT_IN (0x00) if present
+          const v3SwapIndex = commandList.indexOf(0x00);
+          if (v3SwapIndex !== -1 && inputs[v3SwapIndex]) {
+            console.group('🔬 Decoding V3_SWAP_EXACT_IN input:');
+            try {
+              const swapInput = inputs[v3SwapIndex];
+              // V3_SWAP_EXACT_IN: (address recipient, uint256 amountIn, uint256 amountOutMin, bytes path, bool payerIsUser)
+              
+              // Remove function selector (first 4 bytes / 8 hex chars after 0x)
+              const inputData = '0x' + swapInput.slice(2);
+              
+              console.log('Raw input:', inputData);
+              console.log('Input length:', inputData.length);
+              
+              // Manual decode for debugging
+              const recipient = '0x' + inputData.slice(2, 66).slice(24); // Skip padding, get last 20 bytes
+              const amountIn = BigInt('0x' + inputData.slice(66, 130));
+              const amountOutMin = BigInt('0x' + inputData.slice(130, 194));
+              
+              // Path offset
+              const pathOffset = parseInt(inputData.slice(194, 258), 16);
+              console.log('Path offset:', pathOffset);
+              
+              // PayerIsUser bool (last 32 bytes)
+              const payerIsUserHex = inputData.slice(258, 322);
+              const payerIsUser = BigInt('0x' + payerIsUserHex) === 1n;
+              
+              console.log('📍 Recipient:', recipient);
+              console.log('💰 Amount In:', amountIn.toString());
+              console.log('💰 Amount Out Min:', amountOutMin.toString());
+              console.log('👤 PayerIsUser:', payerIsUser, '⚠️ THIS IS WHAT WE NEED TO CHANGE TO FALSE');
+              
+              // Decode path
+              const pathLengthHex = inputData.slice(2 + pathOffset * 2, 2 + pathOffset * 2 + 64);
+              const pathLength = parseInt(pathLengthHex, 16);
+              const pathData = inputData.slice(2 + pathOffset * 2 + 64, 2 + pathOffset * 2 + 64 + pathLength * 2);
+              console.log('🛣️  Path length:', pathLength);
+              console.log('🛣️  Path data:', '0x' + pathData);
+              
+            } catch (e) {
+              console.error('Failed to decode V3_SWAP_EXACT_IN:', e);
+            }
+            console.groupEnd();
+          }
+          
+        }
+        
+      } catch (error) {
+        console.error('❌ Failed to decode Universal Router calldata:', error);
+      }
+      
+      console.groupEnd();
+    }
+    
+    // Modify Universal Router calldata for proxy execution
     let data = tx.data;
+    
+    if (isUniversalRouter) {
+      console.group('🔧 Modifying Universal Router calldata');
+      
+      try {
+        // Decode the current calldata
+        const decoded = decodeFunctionData({
+          abi: uniswapRouter.abi,
+          data: tx.data as `0x${string}`,
+        });
+        
+        if (decoded.functionName === 'execute' && decoded.args) {
+          const [commands, inputs, deadline] = decoded.args as [string, string[], bigint];
+          
+          // Parse command bytes
+          const commandBytes = commands.slice(2);
+          const commandList: number[] = [];
+          for (let i = 0; i < commandBytes.length; i += 2) {
+            commandList.push(parseInt(commandBytes.substr(i, 2), 16));
+          }
+          
+          console.log('Original commands:', commandList.map(c => '0x' + c.toString(16).padStart(2, '0')));
+          console.log('Original inputs count:', inputs.length);
+          
+          const newCommands = [...commandList];
+          const newInputs = [...inputs];
+          
+          // Find and remove PERMIT2_PERMIT (0x0a) command
+          const permit2PermitIndex = commandList.indexOf(0x0a);
+          if (permit2PermitIndex !== -1) {
+            console.log(`🗑️  Removing PERMIT2_PERMIT command at index ${permit2PermitIndex}`);
+            newCommands.splice(permit2PermitIndex, 1);
+            newInputs.splice(permit2PermitIndex, 1);
+          }
+          
+          // Check if there's an UNWRAP_WETH (0x0c) command
+          // If present, keep swap recipient as router so UNWRAP_WETH can work
+          // If not present, set swap recipient to user
+          const hasUnwrapWeth = newCommands.indexOf(0x0c) !== -1;
+          const hasWrapEth = newCommands.indexOf(0x0b) !== -1;
+          
+          console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
+          console.log(`Has WRAP_ETH: ${hasWrapEth}`);
+          
+          // Modify swap commands to use pre-transferred tokens
+          for (let i = 0; i < newCommands.length; i++) {
+            const command = newCommands[i];
+            
+            // V4_SWAP (0x10) - Handle nested action plan
+            if (command === 0x10) {
+              console.log('🔵 Modifying V4_SWAP at index', i);
+              
+              try {
+                const v4Input = newInputs[i];
+                
+                // V4 input structure: abi.encode(bytes actions, bytes[] params)
+                // This is encoded as two top-level parameters, not nested
+                
+                console.log('V4 input (first 400 chars):', v4Input.slice(0, 400));
+                
+                // Decode the V4 plan: (bytes actions, bytes[] params)
+                // Actions is a bytes string where each byte is an action ID
+                // Params is an array of bytes, one for each action
+                const planDecoded = decodeAbiParameters(
+                  [
+                    { name: 'actions', type: 'bytes' },
+                    { name: 'params', type: 'bytes[]' }
+                  ],
+                  v4Input as `0x${string}`
+                );
+                
+                const actionsBytes = planDecoded[0];
+                const params = planDecoded[1];
+                
+                console.log('Actions bytes:', actionsBytes);
+                console.log('Params count:', params.length);
+                
+                // Parse actions
+                const actions: number[] = [];
+                const actionsHex = actionsBytes.slice(2); // Remove 0x
+                for (let j = 0; j < actionsHex.length; j += 2) {
+                  actions.push(parseInt(actionsHex.slice(j, j + 2), 16));
+                }
+                
+                console.log('V4 Actions:', actions.map(a => `0x${a.toString(16).padStart(2, '0')}`));
+                
+                // V4 Action IDs (from v4-periphery Actions.sol)
+                // Correct action IDs based on actual v4-periphery implementation:
+                const V4_ACTIONS = {
+                  SWAP_EXACT_IN_SINGLE: 0x06,
+                  SWAP_EXACT_IN: 0x07,
+                  SWAP_EXACT_OUT_SINGLE: 0x08,
+                  SWAP_EXACT_OUT: 0x09,
+                  SETTLE: 0x0b,           // ← CORRECT ID!
+                  SETTLE_ALL: 0x0c,
+                  SETTLE_PAIR: 0x0d,
+                  TAKE: 0x0e,
+                  TAKE_ALL: 0x0f,
+                  TAKE_PORTION: 0x10,
+                  TAKE_PAIR: 0x11,
+                };
+                
+                // Modify SETTLE actions to use router's balance instead of Permit2
+                const modifiedParams: `0x${string}`[] = [];
+                let modified = false;
+                
+                for (let j = 0; j < actions.length; j++) {
+                  const action = actions[j];
+                  const param = params[j];
+                  
+                  console.log(`Action ${j}: 0x${action.toString(16).padStart(2, '0')}, param length: ${param.length}`);
+                  
+                  // Check if this is a SETTLE action that needs modification
+                  // SETTLE action structure: (Currency currency, uint256 amount, bool payerIsUser)
+                  if (action === V4_ACTIONS.SETTLE) {
+                    console.log(`  → Found SETTLE action (0x0b), attempting to modify payerIsUser`);
+                    
+                    try {
+                      // Decode SETTLE params: (address currency, uint256 amount, bool payerIsUser)
+                      const settleParams = decodeAbiParameters(
+                        [
+                          { name: 'currency', type: 'address' },
+                          { name: 'amount', type: 'uint256' },
+                          { name: 'payerIsUser', type: 'bool' }
+                        ],
+                        param as `0x${string}`
+                      );
+                      
+                      const [currency, amount, payerIsUser] = settleParams;
+                      console.log('  → Original SETTLE params:', {
+                        currency,
+                        amount: amount.toString(),
+                        payerIsUser
+                      });
+                      
+                      // Re-encode with payerIsUser = false
+                      const newParam = encodeAbiParameters(
+                        [
+                          { name: 'currency', type: 'address' },
+                          { name: 'amount', type: 'uint256' },
+                          { name: 'payerIsUser', type: 'bool' }
+                        ],
+                        [currency, amount, false]  // ← Change payerIsUser to false
+                      );
+                      
+                      modifiedParams.push(newParam);
+                      modified = true;
+                      console.log('  → Modified payerIsUser from', payerIsUser, 'to false ✅');
+                      
+                    } catch (error) {
+                      console.error('  → Failed to decode/modify SETTLE action:', error);
+                      console.error('  → Param data:', param);
+                      // Keep original param as fallback
+                      modifiedParams.push(param as `0x${string}`);
+                    }
+                  }
+                  // SETTLE_ALL action: (Currency currency, uint256 maxAmount)
+                  // Note: SETTLE_ALL doesn't have payerIsUser, it always uses payer from context
+                  else if (action === V4_ACTIONS.SETTLE_ALL) {
+                    console.log('  → Found SETTLE_ALL action (0x0c) - no modification needed');
+                    modifiedParams.push(param as `0x${string}`);
+                  }
+                  // SETTLE_PAIR action: (Currency currency0, Currency currency1)
+                  else if (action === V4_ACTIONS.SETTLE_PAIR) {
+                    console.log('  → Found SETTLE_PAIR action (0x0d) - no modification needed');
+                    modifiedParams.push(param as `0x${string}`);
+                  }
+                  else {
+                    // Other actions (SWAP, TAKE, etc.) - keep as-is
+                    console.log(`  → Action 0x${action.toString(16).padStart(2, '0')} - keeping unchanged`);
+                    modifiedParams.push(param as `0x${string}`);
+                  }
+                }
+                
+                if (modified) {
+                  console.log('✅ Modified V4 plan, re-encoding...');
+                  
+                  // Re-encode the plan with modified params
+                  const newV4Input = encodeAbiParameters(
+                    [
+                      { name: 'actions', type: 'bytes' },
+                      { name: 'params', type: 'bytes[]' }
+                    ],
+                    [actionsBytes, modifiedParams]
+                  );
+                  
+                  newInputs[i] = newV4Input;
+                  console.log('✅ V4_SWAP modified successfully');
+                  console.log('New V4 input length:', newV4Input.length);
+                  
+                } else {
+                  console.warn('⚠️ No SETTLE actions found or modified in V4 plan');
+                  console.warn('⚠️ Transaction may fail - V4 will try to use Permit2');
+                  toast.error('V4 transaction may fail: No SETTLE actions could be modified for pre-transfer.');
+                }
+                
+              } catch (error) {
+                console.error('❌ Failed to process V4_SWAP:', error);
+                console.error('Error details:', error);
+                toast.error('Failed to process V4 swap. The transaction may still work with pre-transfer.');
+                // Don't return - let it continue with unmodified input
+              }
+              
+              // Continue to next command
+              continue;
+            }
+            
+            // V3_SWAP_EXACT_IN (0x00) or V3_SWAP_EXACT_OUT (0x01)
+            if (command === 0x00 || command === 0x01) {
+              const commandName = command === 0x00 ? 'V3_SWAP_EXACT_IN' : 'V3_SWAP_EXACT_OUT';
+              console.log(`🔄 Modifying ${commandName} at index ${i}`);
+              
+              const swapInput = newInputs[i];
+              const inputData = '0x' + swapInput.slice(2);
+              
+              // Parse current values
+              // Structure for both: (address recipient, uint256 amount1, uint256 amount2, bytes path, bool payerIsUser)
+              const recipient = '0x' + inputData.slice(2, 66).slice(24);
+              const amount1 = '0x' + inputData.slice(66, 130);
+              const amount2 = '0x' + inputData.slice(130, 194);
+              const pathOffset = '0x' + inputData.slice(194, 258);
+              const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
+              
+              console.log('Old recipient:', recipient);
+              console.log('Old payerIsUser:', payerIsUserOld);
+              
+              // Get the actual path data
+              const pathOffsetInt = parseInt(pathOffset, 16);
+              const pathLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
+              const pathLength = parseInt(pathLengthHex, 16);
+              const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
+              
+              // Construct new input with:
+              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 2. payerIsUser = false (always, since we're pre-transferring)
+              let newRecipient: string;
+              if (hasUnwrapWeth) {
+                // Keep recipient as MSG_SENDER (0x02) or router address
+                // UNWRAP_WETH will handle sending ETH to user
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
+                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              } else {
+                // No UNWRAP_WETH, send directly to user
+                newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+                console.log('New recipient:', '0x' + newRecipient.slice(24));
+              }
+              const newPayerIsUser = '0'.padStart(64, '0'); // false
+              
+              console.log('New payerIsUser:', false);
+              
+              // Reconstruct the input
+              // Structure: recipient (32 bytes) + amount1 (32 bytes) + amount2 (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + path
+              const newInput = '0x' + 
+                newRecipient + 
+                amount1.slice(2) + 
+                amount2.slice(2) + 
+                pathOffset.slice(2) + 
+                newPayerIsUser + 
+                pathLengthHex + 
+                pathData;
+              
+              newInputs[i] = newInput;
+              console.log(`✅ Modified ${commandName} input`);
+            }
+            
+            // V2_SWAP_EXACT_IN (0x08) or V2_SWAP_EXACT_OUT (0x09)
+            if (command === 0x08 || command === 0x09) {
+              const commandName = command === 0x08 ? 'V2_SWAP_EXACT_IN' : 'V2_SWAP_EXACT_OUT';
+              console.log(`🔄 Modifying ${commandName} at index ${i}`);
+              
+              const swapInput = newInputs[i];
+              const inputData = '0x' + swapInput.slice(2);
+              
+              // Parse current values
+              // Structure for both: (address recipient, uint256 amount1, uint256 amount2, address[] path, bool payerIsUser)
+              const recipient = '0x' + inputData.slice(2, 66).slice(24);
+              const amount1 = '0x' + inputData.slice(66, 130);
+              const amount2 = '0x' + inputData.slice(130, 194);
+              const pathOffset = '0x' + inputData.slice(194, 258);
+              const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
+              
+              console.log('Old recipient:', recipient);
+              console.log('Old payerIsUser:', payerIsUserOld);
+              
+              // Get the actual path data (address[] array)
+              const pathOffsetInt = parseInt(pathOffset, 16);
+              const pathArrayLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
+              const pathArrayLength = parseInt(pathArrayLengthHex, 16);
+              const pathArrayData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64);
+              
+              // Construct new input with:
+              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 2. payerIsUser = false (always, since we're pre-transferring)
+              let newRecipient: string;
+              if (hasUnwrapWeth) {
+                // Keep recipient as MSG_SENDER (0x02) or router address
+                // UNWRAP_WETH will handle sending ETH to user
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
+                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              } else {
+                // No UNWRAP_WETH, send directly to user
+                newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+                console.log('New recipient:', '0x' + newRecipient.slice(24));
+              }
+              const newPayerIsUser = '0'.padStart(64, '0'); // false
+              
+              console.log('New payerIsUser:', false);
+              
+              // Reconstruct the input
+              // Structure: recipient (32 bytes) + amount1 (32 bytes) + amount2 (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + pathArray
+              const newInput = '0x' + 
+                newRecipient + 
+                amount1.slice(2) + 
+                amount2.slice(2) + 
+                pathOffset.slice(2) + 
+                newPayerIsUser + 
+                pathArrayLengthHex + 
+                pathArrayData;
+              
+              newInputs[i] = newInput;
+              console.log(`✅ Modified ${commandName} input`);
+            }
+          }
+          
+          // Encode new commands bytes
+          const newCommandsHex = '0x' + newCommands.map(c => c.toString(16).padStart(2, '0')).join('');
+          
+          console.log('New commands:', newCommandsHex);
+          console.log('New inputs count:', newInputs.length);
+          
+          // Re-encode the function call
+          const newData = encodeFunctionData({
+            abi: uniswapRouter.abi,
+            functionName: 'execute',
+            args: [newCommandsHex as `0x${string}`, newInputs as `0x${string}`[], deadline],
+          });
+          
+          console.log('✅ Successfully modified calldata');
+          console.log('Old data length:', tx.data.length);
+          console.log('New data length:', newData.length);
+          
+          data = newData;
+          
+        }
+        
+      } catch (error) {
+        console.error('❌ Failed to modify Universal Router calldata:', error);
+        console.error(error);
+      }
+      
+      console.groupEnd();
+    } else {
+      data = tx.data;
+    }
 
-    const selector = tx.data.slice(0, 10);
+    const selector = data.slice(0, 10);
     const lookup = new whatsabi.loaders.FourByteSignatureLookup();
     const signatures: string[] = await lookup.loadFunctions(selector);
 
-    if (signatures.length > 0) {
+    // Skip address replacement for Universal Router - we already modified it
+    if (signatures.length > 0 && !isUniversalRouter) {
       const fnSignature = signatures[0];
       const fullFragment = `function ${fnSignature}`;
       // console.log('fullFragment', fullFragment);
@@ -478,19 +1005,11 @@ export const TxOptions = () => {
 
       const decoded = decodeFunctionData({
         abi,
-        data: tx.data,
+        data: data,
       });
 
       // console.log('decoded args', decoded.args);
       // console.log('decoded functionName', decoded.functionName);
-
-      // // console.log('🔍 DEBUG: Address replacement:', {
-      //   userAddress: address,
-      //   proxyAddress: proxy.address,
-      //   originalArgs: JSON.stringify(decoded.args, (_, value) =>
-      //     typeof value === 'bigint' ? value.toString() : value
-      //   ),
-      // });
 
       let newArgs = swapAddressInArgsTraverse(
         decoded.args || [],
@@ -503,47 +1022,36 @@ export const TxOptions = () => {
         proxy.address.slice(2).toLowerCase()
       );
 
-      // // console.log('🔍 DEBUG: After address replacement:', {
-      //   modifiedArgs: JSON.stringify(newArgs, (key, value) =>
-      //     typeof value === 'bigint' ? value.toString() : value
-      //   ),
-      // });
-
       const newData = encodeFunctionData({
         abi,
         functionName: decoded.functionName,
         args: newArgs,
       });
 
-      // console.log('🔍 DEBUG: Transaction data:', {
-      //   originalData: tx.data,
-      //   modifiedData: newData,
-      //   dataLength: `${tx.data.length} -> ${newData.length}`,
-      // });
-
       data = newData;
     }
 
     const tokenApprovals = checks.approvals.filter(
-      (check) => check.token !== zeroAddress
+      (check) =>
+        check.token !== zeroAddress &&
+        check.token !== '' &&
+        check.token !== ethAddress
     );
 
-    // console.log('🔍 DEBUG: Token approvals from checks:', {
-    //   totalApprovals: checks.approvals.length,
-    //   tokenApprovals: tokenApprovals.map(t => ({
-    //     token: t.token,
-    //     target: t.target,
-    //     balance: t.balance,
-    //     symbol: t.symbol,
-    //     decimals: t.decimals,
-    //   })),
-    // });
-
-    const value = checks.approvals.find(
-      (check) => check.token === zeroAddress
-    )?.balance;
+    // Get ETH value from original transaction (not from checks, since we skip ETH approvals)
+    const value = tx.value ? BigInt(tx.value) : undefined;
 
     for (const token of tokenApprovals) {
+      // Additional safety check
+      if (
+        !token.token ||
+        token.token === '' ||
+        token.token === zeroAddress ||
+        token.token === ethAddress
+      ) {
+        continue;
+      }
+
       const [allowance, decimals, balance] = await publicClient.multicall({
         contracts: [
           {
@@ -572,19 +1080,6 @@ export const TxOptions = () => {
         token.balance.toString().replace(',', '.'),
         decimals
       );
-
-      // console.log('approval', token, { allowance, needed, balance, isBigger: allowance >= needed });
-
-      // console.log('🔍 DEBUG: User approval check:', {
-      //   tokenAddress: token.token,
-      //   tokenSymbol: token.symbol,
-      //   userAddress: address,
-      //   proxyAddress: proxy.address,
-      //   currentAllowance: allowance.toString(),
-      //   needed: needed.toString(),
-      //   userBalance: balance.toString(),
-      //   needsApproval: allowance < needed,
-      // });
 
       if (allowance >= needed) {
         // console.log('✅ Approval already sufficient, skipping');
@@ -668,46 +1163,160 @@ export const TxOptions = () => {
       }
     }
 
-    // console.log('🔍 DEBUG: About to transform metadata for contract call');
-    // console.log('🔍 DEBUG: tokenApprovals before transform:', tokenApprovals);
+    // Pre-transfer tokens to Universal Router if needed (payerIsUser = false)
+    // Skip if transaction has WRAP_ETH command (ETH input - comes with tx.value)
+    let hasWrapEthCommand = false;
+    if (isUniversalRouter) {
+      try {
+        const decoded = decodeFunctionData({
+          abi: uniswapRouter.abi,
+          data: tx.data as `0x${string}`,
+        });
+        if (decoded.functionName === 'execute' && decoded.args) {
+          const [commands] = decoded.args as [string, string[], bigint];
+          const commandBytes = commands.slice(2);
+          for (let i = 0; i < commandBytes.length; i += 2) {
+            if (parseInt(commandBytes.substr(i, 2), 16) === 0x0b) {
+              hasWrapEthCommand = true;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Ignore decode errors
+      }
+    }
+    
+    if (isUniversalRouter && tokenApprovals.length > 0 && !hasWrapEthCommand) {
+      console.group('💸 Checking Universal Router token balances');
+      
+      for (const token of tokenApprovals) {
+        if (
+          !token.token ||
+          token.token === '' ||
+          token.token === zeroAddress ||
+          token.token === ethAddress
+        ) {
+          continue;
+        }
+        
+        const decimals = token.decimals || 18;
+        const amount = parseUnits(
+          token.balance.toString().replace(',', '.'),
+          decimals
+        );
+        
+        // Check current balance of Universal Router
+        const routerBalance = await publicClient.readContract({
+          abi: erc20Abi,
+          address: token.token as `0x${string}`,
+          functionName: 'balanceOf',
+          args: [uniswapRouter.address as `0x${string}`],
+        });
+        
+        console.log(`${token.symbol} balance check:`);
+        console.log(`  Router has: ${routerBalance.toString()} wei`);
+        console.log(`  Swap needs: ${amount.toString()} wei`);
+        
+        if (routerBalance >= amount) {
+          console.log(`✅ Router already has enough ${token.symbol}, skipping pre-transfer`);
+          continue;
+        }
+        
+        const amountToTransfer = amount - routerBalance;
+        console.log(`📤 Need to transfer: ${amountToTransfer.toString()} wei (${formatUnits(amountToTransfer, decimals)} ${token.symbol})`);
+        
+        console.log(`Transferring ${formatUnits(amountToTransfer, decimals)} ${token.symbol} to Universal Router...`);
+        console.log(`Token:`, token.token);
+        console.log(`To:`, uniswapRouter.address);
+        
+        try {
+          const hash = await writeContractAsync({
+            abi: erc20Abi,
+            address: token.token as `0x${string}`,
+            functionName: 'transfer',
+            args: [uniswapRouter.address as `0x${string}`, amountToTransfer],
+          });
+          
+          console.log(`Transfer transaction sent:`, hash);
+          
+          const receipt = await publicClient.waitForTransactionReceipt({
+            hash,
+          });
+          
+          console.log('✅ Transfer confirmed:', {
+            hash,
+            status: receipt.status,
+            token: token.symbol,
+            amount: formatUnits(amountToTransfer, decimals),
+          });
+          
+        } catch (error) {
+          console.error('❌ Pre-transfer failed:', error);
+          toast.error(`Failed to transfer ${token.symbol} to router`);
+          setIsLoading(false);
+          closeModal();
+          return;
+        }
+      }
+      
+      console.groupEnd();
+    }
+
+    // For Universal Router, we need to adjust checks:
+    // - No approvals needed (tokens pre-transferred or ETH sent with tx.value)
+    // - Input token balance already changed during pre-transfer (or ETH with tx.value)
+    // - Only output token balance will change during proxy execution
+    // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
+    let diffsToUse = checks.diffs;
+    let approvalsToUse = tokenApprovals;
+    let withdrawalsToUse = checks.withdrawals;
+    
+    if (isUniversalRouter) {
+      console.log('🔧 Adjusting checks for Universal Router');
+      console.log('Original diffs:', checks.diffs);
+      console.log('Original approvals:', tokenApprovals);
+      console.log('Original withdrawals:', checks.withdrawals);
+      console.log('Has WRAP_ETH:', hasWrapEthCommand);
+      
+      if (hasWrapEthCommand) {
+        // ETH input: No pre-transfer, ETH comes with tx.value
+        // No approval checks needed
+        approvalsToUse = [];
+        
+        // Keep all diffs (ETH decrease will be from tx.value, not from balance change)
+        // Filter to only positive diffs (output token increase)
+        diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
+        
+        // No withdrawal checks - proxy doesn't hold the tokens
+        withdrawalsToUse = [];
+      } else {
+        // Token input: Pre-transferred to router
+        // No approval checks needed - tokens are already in the router
+        approvalsToUse = [];
+        
+        // Filter out negative diffs (input tokens) - their balance already changed
+        diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
+        
+        // No withdrawal checks needed for any token - diffs check is sufficient
+        // Withdrawal checks try to send tokens which the proxy doesn't have
+        withdrawalsToUse = [];
+      }
+      
+      console.log('Adjusted approvals:', approvalsToUse);
+      console.log('Adjusted diffs (output only):', diffsToUse);
+      console.log('Adjusted withdrawals:', withdrawalsToUse);
+    }
 
     const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
       await Promise.all([
         transformToMetadata(checks.postTransfer, publicClient),
         transformToMetadata(checks.preTransfer, publicClient),
 
-        transformToMetadata(checks.diffs, publicClient),
-        transformToMetadata(tokenApprovals, publicClient),
-        transformToMetadata(checks.withdrawals, publicClient),
+        transformToMetadata(diffsToUse, publicClient),
+        transformToMetadata(approvalsToUse, publicClient),
+        transformToMetadata(withdrawalsToUse, publicClient),
       ]);
-
-    // 🔍 DEBUG: Log all parameters being sent to contract
-    // console.log('🔍 DEBUG: Contract call parameters:');
-    // console.log('Mode:', mode);
-    // console.log('Target (SwapRouter02):', tx.to);
-    // console.log('Proxy address:', proxy.address);
-    // console.log('Approvals array:', JSON.stringify(approvals.map(a => ({
-    //   target: a.balance.target,
-    //   token: a.balance.token,
-    //   balance: a.balance.balance.toString(),
-    //   symbol: a.symbol,
-    //   decimals: a.decimals,
-    // })), null, 2));
-    // console.log('Withdrawals array:', JSON.stringify(withdrawals.map(w => ({
-    //   target: w.balance.target,
-    //   token: w.balance.token,
-    //   balance: w.balance.balance.toString(),
-    //   symbol: w.symbol,
-    //   decimals: w.decimals,
-    // })), null, 2));
-    // console.log('Diffs array:', JSON.stringify(diffs.map(d => ({
-    //   target: d.balance.target,
-    //   token: d.balance.token,
-    //   balance: d.balance.balance.toString(),
-    //   symbol: d.symbol,
-    //   decimals: d.decimals,
-    // })), null, 2));
-    // console.log('ETH value:', value);
 
     try {
       let hash: `0x${string}` = '0x';
@@ -742,9 +1351,7 @@ export const TxOptions = () => {
                 return '0x';
             }
           })(),
-          value: value
-            ? parseUnits(value.toString().replace(',', '.'), 18)
-            : 0n,
+          value: value || 0n,
         };
 
         const result = await safe.txs.send({
@@ -770,35 +1377,19 @@ export const TxOptions = () => {
       } else {
         switch (mode) {
           case EMode.diifs: {
-            // console.log('🚀 Calling proxyCallMetadataCalldataDiffs with:', {
-            //   diffsCount: diffs.length,
-            //   approvalsCount: approvals.length,
-            //   withdrawalsCount: withdrawals.length,
-            //   target: tx.to,
-            // });
-
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
               functionName: 'proxyCallMetadataCalldataDiffs',
               args: [diffs, approvals, tx.to, data, withdrawals],
-              value: value
-                ? parseUnits(value.toString().replace(',', '.'), 18)
-                : undefined,
+              value: value,
+              maxFeePerGas: 200_000n,
             });
 
             break;
           }
 
           case EMode['pre/post']: {
-            // console.log('🚀 Calling proxyCallMetadataCalldata with:', {
-            //   postTransfersCount: postTransfers.length,
-            //   preTransfersCount: preTransfers.length,
-            //   approvalsCount: approvals.length,
-            //   withdrawalsCount: withdrawals.length,
-            //   target: tx.to,
-            // });
-
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
@@ -811,9 +1402,7 @@ export const TxOptions = () => {
                 data,
                 withdrawals,
               ],
-              value: value
-                ? parseUnits(value.toString().replace(',', '.'), 18)
-                : undefined,
+              value: value,
             });
 
             break;
@@ -848,9 +1437,8 @@ export const TxOptions = () => {
     } catch (error) {
       console.error('❌ Transaction failed with error:', error);
       console.error('Error details:', error);
-      toast.error(
-        `Transaction failed: ${(error as any)?.message || 'Unknown error'}`
-      );
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      toast.error(`Transaction failed: ${errorMessage}`);
       closeModal();
       resetCheckState();
     } finally {
@@ -1019,11 +1607,13 @@ export const TxOptions = () => {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
-              {checks.approvals.map((check) => (
-                <p key={check.token} className="text-lg font-bold">
-                  - {check.balance.toFixed(3)} {check.symbol}
-                </p>
-              ))}
+              {checks.approvals
+                .filter((check) => check.token != '')
+                .map((check) => (
+                  <p key={check.token} className="text-lg font-bold">
+                    - {check.balance.toFixed(3)} {check.symbol}
+                  </p>
+                ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>

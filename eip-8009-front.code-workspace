@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../eip-8009-contracts"
+		},
+		{
+			"path": "../universal-router"
+		},
+		{
+			"path": "../permit2"
+		}
+	],
+	"settings": {}
+}
