@@ -550,7 +550,7 @@ export const TxOptions = () => {
           
           // Map command bytes to names
           const COMMAND_NAMES: { [key: number]: string } = {
-            0x00: 'V3_SWAP_EXACT_IN',
+            0x00: 'V3_SWAP_EXACT_OUT',
             0x01: 'V3_SWAP_EXACT_OUT',
             0x02: 'PERMIT2_TRANSFER_FROM',
             0x03: 'PERMIT2_PERMIT_BATCH',
@@ -677,9 +677,17 @@ export const TxOptions = () => {
           // If not present, set swap recipient to user
           const hasUnwrapWeth = newCommands.indexOf(0x0c) !== -1;
           const hasWrapEth = newCommands.indexOf(0x0b) !== -1;
+          const hasPayPortion = newCommands.indexOf(0x06) !== -1;
+          const hasSweep = newCommands.indexOf(0x04) !== -1;
+          
+          // If any of these commands exist after the swap, tokens should stay in router
+          const shouldKeepInRouter = hasUnwrapWeth || hasPayPortion || hasSweep;
           
           console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
           console.log(`Has WRAP_ETH: ${hasWrapEth}`);
+          console.log(`Has PAY_PORTION: ${hasPayPortion}`);
+          console.log(`Has SWEEP: ${hasSweep}`);
+          console.log(`Should keep tokens in router: ${shouldKeepInRouter}`);
           
           // Modify swap commands to use pre-transferred tokens
           for (let i = 0; i < newCommands.length; i++) {
@@ -870,16 +878,16 @@ export const TxOptions = () => {
               const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
               
               // Construct new input with:
-              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 1. Recipient = ADDRESS_THIS (router) if there are downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+              //    Otherwise send directly to user
               // 2. payerIsUser = false (always, since we're pre-transferring)
               let newRecipient: string;
-              if (hasUnwrapWeth) {
-                // Keep recipient as MSG_SENDER (0x02) or router address
-                // UNWRAP_WETH will handle sending ETH to user
-                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
-                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              if (shouldKeepInRouter) {
+                // Keep tokens in router for downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
+                console.log('New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands');
               } else {
-                // No UNWRAP_WETH, send directly to user
+                // No downstream commands, send directly to user
                 newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
                 console.log('New recipient:', '0x' + newRecipient.slice(24));
               }
@@ -928,16 +936,16 @@ export const TxOptions = () => {
               const pathArrayData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64);
               
               // Construct new input with:
-              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 1. Recipient = ADDRESS_THIS (router) if there are downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+              //    Otherwise send directly to user
               // 2. payerIsUser = false (always, since we're pre-transferring)
               let newRecipient: string;
-              if (hasUnwrapWeth) {
-                // Keep recipient as MSG_SENDER (0x02) or router address
-                // UNWRAP_WETH will handle sending ETH to user
-                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
-                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              if (shouldKeepInRouter) {
+                // Keep tokens in router for downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
+                console.log('New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands');
               } else {
-                // No UNWRAP_WETH, send directly to user
+                // No downstream commands, send directly to user
                 newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
                 console.log('New recipient:', '0x' + newRecipient.slice(24));
               }
