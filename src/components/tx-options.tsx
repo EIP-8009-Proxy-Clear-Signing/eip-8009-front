@@ -550,7 +550,7 @@ export const TxOptions = () => {
           
           // Map command bytes to names
           const COMMAND_NAMES: { [key: number]: string } = {
-            0x00: 'V3_SWAP_EXACT_OUT',
+            0x00: 'V3_SWAP_EXACT_IN',
             0x01: 'V3_SWAP_EXACT_OUT',
             0x02: 'PERMIT2_TRANSFER_FROM',
             0x03: 'PERMIT2_PERMIT_BATCH',
@@ -580,52 +580,6 @@ export const TxOptions = () => {
             console.log(`    Length: ${input.length} characters`);
           });
           console.groupEnd();
-          
-          // Try to decode V3_SWAP_EXACT_IN (0x00) if present
-          const v3SwapIndex = commandList.indexOf(0x00);
-          if (v3SwapIndex !== -1 && inputs[v3SwapIndex]) {
-            console.group('🔬 Decoding V3_SWAP_EXACT_IN input:');
-            try {
-              const swapInput = inputs[v3SwapIndex];
-              // V3_SWAP_EXACT_IN: (address recipient, uint256 amountIn, uint256 amountOutMin, bytes path, bool payerIsUser)
-              
-              // Remove function selector (first 4 bytes / 8 hex chars after 0x)
-              const inputData = '0x' + swapInput.slice(2);
-              
-              console.log('Raw input:', inputData);
-              console.log('Input length:', inputData.length);
-              
-              // Manual decode for debugging
-              const recipient = '0x' + inputData.slice(2, 66).slice(24); // Skip padding, get last 20 bytes
-              const amountIn = BigInt('0x' + inputData.slice(66, 130));
-              const amountOutMin = BigInt('0x' + inputData.slice(130, 194));
-              
-              // Path offset
-              const pathOffset = parseInt(inputData.slice(194, 258), 16);
-              console.log('Path offset:', pathOffset);
-              
-              // PayerIsUser bool (last 32 bytes)
-              const payerIsUserHex = inputData.slice(258, 322);
-              const payerIsUser = BigInt('0x' + payerIsUserHex) === 1n;
-              
-              console.log('📍 Recipient:', recipient);
-              console.log('💰 Amount In:', amountIn.toString());
-              console.log('💰 Amount Out Min:', amountOutMin.toString());
-              console.log('👤 PayerIsUser:', payerIsUser, '⚠️ THIS IS WHAT WE NEED TO CHANGE TO FALSE');
-              
-              // Decode path
-              const pathLengthHex = inputData.slice(2 + pathOffset * 2, 2 + pathOffset * 2 + 64);
-              const pathLength = parseInt(pathLengthHex, 16);
-              const pathData = inputData.slice(2 + pathOffset * 2 + 64, 2 + pathOffset * 2 + 64 + pathLength * 2);
-              console.log('🛣️  Path length:', pathLength);
-              console.log('🛣️  Path data:', '0x' + pathData);
-              
-            } catch (e) {
-              console.error('Failed to decode V3_SWAP_EXACT_IN:', e);
-            }
-            console.groupEnd();
-          }
-          
         }
         
       } catch (error) {
