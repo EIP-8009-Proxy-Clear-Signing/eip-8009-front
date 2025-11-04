@@ -1280,6 +1280,13 @@ export const TxOptions = () => {
         transformToMetadata(withdrawalsToUse, publicClient),
       ]);
 
+    // For Universal Router, we pre-transfer tokens, so we need useTransferFlags = true
+    // This tells the proxy to transfer tokens to the router instead of approving
+    const useTransferFlags = approvals.map(() => true);
+    // For now, use default approve behavior for pre-transfers (false)
+    // TODO: Move to pre-transfer logic with true once everything works
+    const preTransferFlags = approvals.map(() => false);
+
     try {
       let hash: `0x${string}` = '0x';
 
@@ -1292,7 +1299,7 @@ export const TxOptions = () => {
                 return encodeFunctionData({
                   abi: proxy.abi,
                   functionName: 'proxyCallMetadataCalldataDiffs',
-                  args: [diffs, approvals, tx.to, data, withdrawals],
+                  args: [diffs, approvals, useTransferFlags, tx.to, data, withdrawals],
                 });
               }
               case EMode['pre/post']: {
@@ -1302,7 +1309,7 @@ export const TxOptions = () => {
                   args: [
                     postTransfers,
                     preTransfers,
-                    approvals,
+                    preTransferFlags,
                     tx.to,
                     data,
                     withdrawals,
@@ -1343,7 +1350,7 @@ export const TxOptions = () => {
               abi: proxy.abi,
               address: proxy.address,
               functionName: 'proxyCallMetadataCalldataDiffs',
-              args: [diffs, approvals, tx.to, data, withdrawals],
+              args: [diffs, approvals, useTransferFlags, tx.to, data, withdrawals],
               value: value,
               maxFeePerGas: 200_000n,
             });
@@ -1359,7 +1366,7 @@ export const TxOptions = () => {
               args: [
                 postTransfers,
                 preTransfers,
-                approvals,
+                preTransferFlags,
                 tx.to,
                 data,
                 withdrawals,
