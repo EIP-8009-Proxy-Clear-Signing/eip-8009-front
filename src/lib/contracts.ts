@@ -5,7 +5,7 @@ import { universalRouterAbi } from './universal-router.abi';
 export const contracts = {
   [sepolia.id]: {
     proxy: {
-      address: '0x24a0BFCE1f30c614edE386e07e64DcCba5fabD5A' as const,
+      address: '0x94af70F88602C256a6976eB6Fe0C99a7084E9a17' as const,
       abi: proxyAbi,
     },
     uniswapRouter: {
