@@ -40,7 +40,6 @@ import {
   decodeAbiParameters,
   erc20Abi,
   ethAddress,
-  formatUnits,
   parseAbi,
   parseUnits,
   PublicClient,
@@ -580,52 +579,6 @@ export const TxOptions = () => {
             console.log(`    Length: ${input.length} characters`);
           });
           console.groupEnd();
-          
-          // Try to decode V3_SWAP_EXACT_IN (0x00) if present
-          const v3SwapIndex = commandList.indexOf(0x00);
-          if (v3SwapIndex !== -1 && inputs[v3SwapIndex]) {
-            console.group('🔬 Decoding V3_SWAP_EXACT_IN input:');
-            try {
-              const swapInput = inputs[v3SwapIndex];
-              // V3_SWAP_EXACT_IN: (address recipient, uint256 amountIn, uint256 amountOutMin, bytes path, bool payerIsUser)
-              
-              // Remove function selector (first 4 bytes / 8 hex chars after 0x)
-              const inputData = '0x' + swapInput.slice(2);
-              
-              console.log('Raw input:', inputData);
-              console.log('Input length:', inputData.length);
-              
-              // Manual decode for debugging
-              const recipient = '0x' + inputData.slice(2, 66).slice(24); // Skip padding, get last 20 bytes
-              const amountIn = BigInt('0x' + inputData.slice(66, 130));
-              const amountOutMin = BigInt('0x' + inputData.slice(130, 194));
-              
-              // Path offset
-              const pathOffset = parseInt(inputData.slice(194, 258), 16);
-              console.log('Path offset:', pathOffset);
-              
-              // PayerIsUser bool (last 32 bytes)
-              const payerIsUserHex = inputData.slice(258, 322);
-              const payerIsUser = BigInt('0x' + payerIsUserHex) === 1n;
-              
-              console.log('📍 Recipient:', recipient);
-              console.log('💰 Amount In:', amountIn.toString());
-              console.log('💰 Amount Out Min:', amountOutMin.toString());
-              console.log('👤 PayerIsUser:', payerIsUser, '⚠️ THIS IS WHAT WE NEED TO CHANGE TO FALSE');
-              
-              // Decode path
-              const pathLengthHex = inputData.slice(2 + pathOffset * 2, 2 + pathOffset * 2 + 64);
-              const pathLength = parseInt(pathLengthHex, 16);
-              const pathData = inputData.slice(2 + pathOffset * 2 + 64, 2 + pathOffset * 2 + 64 + pathLength * 2);
-              console.log('🛣️  Path length:', pathLength);
-              console.log('🛣️  Path data:', '0x' + pathData);
-              
-            } catch (e) {
-              console.error('Failed to decode V3_SWAP_EXACT_IN:', e);
-            }
-            console.groupEnd();
-          }
-          
         }
         
       } catch (error) {
@@ -677,9 +630,17 @@ export const TxOptions = () => {
           // If not present, set swap recipient to user
           const hasUnwrapWeth = newCommands.indexOf(0x0c) !== -1;
           const hasWrapEth = newCommands.indexOf(0x0b) !== -1;
+          const hasPayPortion = newCommands.indexOf(0x06) !== -1;
+          const hasSweep = newCommands.indexOf(0x04) !== -1;
+          
+          // If any of these commands exist after the swap, tokens should stay in router
+          const shouldKeepInRouter = hasUnwrapWeth || hasPayPortion || hasSweep;
           
           console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
           console.log(`Has WRAP_ETH: ${hasWrapEth}`);
+          console.log(`Has PAY_PORTION: ${hasPayPortion}`);
+          console.log(`Has SWEEP: ${hasSweep}`);
+          console.log(`Should keep tokens in router: ${shouldKeepInRouter}`);
           
           // Modify swap commands to use pre-transferred tokens
           for (let i = 0; i < newCommands.length; i++) {
@@ -870,16 +831,16 @@ export const TxOptions = () => {
               const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
               
               // Construct new input with:
-              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 1. Recipient = ADDRESS_THIS (router) if there are downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+              //    Otherwise send directly to user
               // 2. payerIsUser = false (always, since we're pre-transferring)
               let newRecipient: string;
-              if (hasUnwrapWeth) {
-                // Keep recipient as MSG_SENDER (0x02) or router address
-                // UNWRAP_WETH will handle sending ETH to user
-                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
-                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              if (shouldKeepInRouter) {
+                // Keep tokens in router for downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
+                console.log('New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands');
               } else {
-                // No UNWRAP_WETH, send directly to user
+                // No downstream commands, send directly to user
                 newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
                 console.log('New recipient:', '0x' + newRecipient.slice(24));
               }
@@ -928,16 +889,16 @@ export const TxOptions = () => {
               const pathArrayData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64);
               
               // Construct new input with:
-              // 1. Recipient = router address if UNWRAP_WETH present, user address otherwise
+              // 1. Recipient = ADDRESS_THIS (router) if there are downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+              //    Otherwise send directly to user
               // 2. payerIsUser = false (always, since we're pre-transferring)
               let newRecipient: string;
-              if (hasUnwrapWeth) {
-                // Keep recipient as MSG_SENDER (0x02) or router address
-                // UNWRAP_WETH will handle sending ETH to user
-                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER constant
-                console.log('New recipient: MSG_SENDER (0x02) - UNWRAP_WETH will send ETH to user');
+              if (shouldKeepInRouter) {
+                // Keep tokens in router for downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
+                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
+                console.log('New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands');
               } else {
-                // No UNWRAP_WETH, send directly to user
+                // No downstream commands, send directly to user
                 newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
                 console.log('New recipient:', '0x' + newRecipient.slice(24));
               }
@@ -1163,8 +1124,7 @@ export const TxOptions = () => {
       }
     }
 
-    // Pre-transfer tokens to Universal Router if needed (payerIsUser = false)
-    // Skip if transaction has WRAP_ETH command (ETH input - comes with tx.value)
+    // Detect if transaction has WRAP_ETH command (ETH input - comes with tx.value)
     let hasWrapEthCommand = false;
     if (isUniversalRouter) {
       try {
@@ -1186,86 +1146,10 @@ export const TxOptions = () => {
         // Ignore decode errors
       }
     }
-    
-    if (isUniversalRouter && tokenApprovals.length > 0 && !hasWrapEthCommand) {
-      console.group('💸 Checking Universal Router token balances');
-      
-      for (const token of tokenApprovals) {
-        if (
-          !token.token ||
-          token.token === '' ||
-          token.token === zeroAddress ||
-          token.token === ethAddress
-        ) {
-          continue;
-        }
-        
-        const decimals = token.decimals || 18;
-        const amount = parseUnits(
-          token.balance.toString().replace(',', '.'),
-          decimals
-        );
-        
-        // Check current balance of Universal Router
-        const routerBalance = await publicClient.readContract({
-          abi: erc20Abi,
-          address: token.token as `0x${string}`,
-          functionName: 'balanceOf',
-          args: [uniswapRouter.address as `0x${string}`],
-        });
-        
-        console.log(`${token.symbol} balance check:`);
-        console.log(`  Router has: ${routerBalance.toString()} wei`);
-        console.log(`  Swap needs: ${amount.toString()} wei`);
-        
-        if (routerBalance >= amount) {
-          console.log(`✅ Router already has enough ${token.symbol}, skipping pre-transfer`);
-          continue;
-        }
-        
-        const amountToTransfer = amount - routerBalance;
-        console.log(`📤 Need to transfer: ${amountToTransfer.toString()} wei (${formatUnits(amountToTransfer, decimals)} ${token.symbol})`);
-        
-        console.log(`Transferring ${formatUnits(amountToTransfer, decimals)} ${token.symbol} to Universal Router...`);
-        console.log(`Token:`, token.token);
-        console.log(`To:`, uniswapRouter.address);
-        
-        try {
-          const hash = await writeContractAsync({
-            abi: erc20Abi,
-            address: token.token as `0x${string}`,
-            functionName: 'transfer',
-            args: [uniswapRouter.address as `0x${string}`, amountToTransfer],
-          });
-          
-          console.log(`Transfer transaction sent:`, hash);
-          
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-          });
-          
-          console.log('✅ Transfer confirmed:', {
-            hash,
-            status: receipt.status,
-            token: token.symbol,
-            amount: formatUnits(amountToTransfer, decimals),
-          });
-          
-        } catch (error) {
-          console.error('❌ Pre-transfer failed:', error);
-          toast.error(`Failed to transfer ${token.symbol} to router`);
-          setIsLoading(false);
-          closeModal();
-          return;
-        }
-      }
-      
-      console.groupEnd();
-    }
 
     // For Universal Router, we need to adjust checks:
-    // - No approvals needed (tokens pre-transferred or ETH sent with tx.value)
-    // - Input token balance already changed during pre-transfer (or ETH with tx.value)
+    // - For token input: Add pre-transfer items to approvals (proxy will transfer from user → router)
+    // - For ETH input: No approvals needed (ETH comes with tx.value)
     // - Only output token balance will change during proxy execution
     // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
     let diffsToUse = checks.diffs;
@@ -1291,11 +1175,15 @@ export const TxOptions = () => {
         // No withdrawal checks - proxy doesn't hold the tokens
         withdrawalsToUse = [];
       } else {
-        // Token input: Pre-transferred to router
-        // No approval checks needed - tokens are already in the router
-        approvalsToUse = [];
+        // Token input: Add pre-transfer to approvals array
+        // The proxy will transfer tokens from user → router in the same transaction
+        // Change target to Universal Router address for pre-transfer
+        approvalsToUse = tokenApprovals.map(approval => ({
+          ...approval,
+          target: uniswapRouter.address, // Proxy will transfer to router, not approve proxy
+        }));
         
-        // Filter out negative diffs (input tokens) - their balance already changed
+        // Filter out negative diffs (input tokens) - their balance will change from proxy transfer
         diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
         
         // No withdrawal checks needed for any token - diffs check is sufficient
@@ -1318,6 +1206,11 @@ export const TxOptions = () => {
         transformToMetadata(withdrawalsToUse, publicClient),
       ]);
 
+    // For Universal Router with token input: use transfer (true) so proxy transfers tokens to router
+    // For everything else: use approve (false) - default behavior
+    const transferFlags = approvals.map(() => isUniversalRouter && !hasWrapEthCommand);
+    const preTransferFlags = preTransfers.map(() => false); // Default approve for pre/post mode
+
     try {
       let hash: `0x${string}` = '0x';
 
@@ -1330,7 +1223,7 @@ export const TxOptions = () => {
                 return encodeFunctionData({
                   abi: proxy.abi,
                   functionName: 'proxyCallMetadataCalldataDiffs',
-                  args: [diffs, approvals, tx.to, data, withdrawals],
+                  args: [diffs, approvals, transferFlags, tx.to, data, withdrawals],
                 });
               }
               case EMode['pre/post']: {
@@ -1340,7 +1233,7 @@ export const TxOptions = () => {
                   args: [
                     postTransfers,
                     preTransfers,
-                    approvals,
+                    preTransferFlags,
                     tx.to,
                     data,
                     withdrawals,
@@ -1381,7 +1274,7 @@ export const TxOptions = () => {
               abi: proxy.abi,
               address: proxy.address,
               functionName: 'proxyCallMetadataCalldataDiffs',
-              args: [diffs, approvals, tx.to, data, withdrawals],
+              args: [diffs, approvals, transferFlags, tx.to, data, withdrawals],
               value: value,
               maxFeePerGas: 200_000n,
             });
@@ -1397,7 +1290,7 @@ export const TxOptions = () => {
               args: [
                 postTransfers,
                 preTransfers,
-                approvals,
+                preTransferFlags,
                 tx.to,
                 data,
                 withdrawals,
