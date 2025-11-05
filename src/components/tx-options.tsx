@@ -345,8 +345,9 @@ export const TxOptions = () => {
       from?.token.address === zeroAddress || from?.token.address === ethAddress;
     // const isFromEth = false;
 
-    // Only create approval check for non-ETH tokens
-    if (!checks.approvals.length && !isFromEth) {
+    // Always create approval check (for UI display)
+    // Backend will handle ETH vs token logic appropriately
+    if (!checks.approvals.length) {
       createApprovalCheck();
     }
 
@@ -1504,15 +1505,17 @@ export const TxOptions = () => {
                 .filter((check) => check.token != '')
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    - {check.balance.toFixed(3)} {check.symbol}
+                    - {check.balance.toFixed(6)} {check.symbol}
                   </p>
                 ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
-              {checks.withdrawals.map((check) => (
+              {checks.withdrawals
+                .filter((check) => check.token != '')
+                .map((check) => (
                 <p key={check.token} className="text-lg font-bold">
-                  + {check.balance.toFixed(3)} {check.symbol}
+                  + {check.balance.toFixed(6)} {check.symbol}
                 </p>
               ))}
             </div>
