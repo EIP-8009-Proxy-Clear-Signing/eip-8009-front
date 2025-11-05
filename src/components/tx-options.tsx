@@ -40,7 +40,6 @@ import {
   decodeAbiParameters,
   erc20Abi,
   ethAddress,
-  formatUnits,
   parseAbi,
   parseUnits,
   PublicClient,
@@ -1125,8 +1124,7 @@ export const TxOptions = () => {
       }
     }
 
-    // Pre-transfer tokens to Universal Router if needed (payerIsUser = false)
-    // Skip if transaction has WRAP_ETH command (ETH input - comes with tx.value)
+    // Detect if transaction has WRAP_ETH command (ETH input - comes with tx.value)
     let hasWrapEthCommand = false;
     if (isUniversalRouter) {
       try {
@@ -1148,86 +1146,10 @@ export const TxOptions = () => {
         // Ignore decode errors
       }
     }
-    
-    if (isUniversalRouter && tokenApprovals.length > 0 && !hasWrapEthCommand) {
-      console.group('💸 Checking Universal Router token balances');
-      
-      for (const token of tokenApprovals) {
-        if (
-          !token.token ||
-          token.token === '' ||
-          token.token === zeroAddress ||
-          token.token === ethAddress
-        ) {
-          continue;
-        }
-        
-        const decimals = token.decimals || 18;
-        const amount = parseUnits(
-          token.balance.toString().replace(',', '.'),
-          decimals
-        );
-        
-        // Check current balance of Universal Router
-        const routerBalance = await publicClient.readContract({
-          abi: erc20Abi,
-          address: token.token as `0x${string}`,
-          functionName: 'balanceOf',
-          args: [uniswapRouter.address as `0x${string}`],
-        });
-        
-        console.log(`${token.symbol} balance check:`);
-        console.log(`  Router has: ${routerBalance.toString()} wei`);
-        console.log(`  Swap needs: ${amount.toString()} wei`);
-        
-        if (routerBalance >= amount) {
-          console.log(`✅ Router already has enough ${token.symbol}, skipping pre-transfer`);
-          continue;
-        }
-        
-        const amountToTransfer = amount - routerBalance;
-        console.log(`📤 Need to transfer: ${amountToTransfer.toString()} wei (${formatUnits(amountToTransfer, decimals)} ${token.symbol})`);
-        
-        console.log(`Transferring ${formatUnits(amountToTransfer, decimals)} ${token.symbol} to Universal Router...`);
-        console.log(`Token:`, token.token);
-        console.log(`To:`, uniswapRouter.address);
-        
-        try {
-          const hash = await writeContractAsync({
-            abi: erc20Abi,
-            address: token.token as `0x${string}`,
-            functionName: 'transfer',
-            args: [uniswapRouter.address as `0x${string}`, amountToTransfer],
-          });
-          
-          console.log(`Transfer transaction sent:`, hash);
-          
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-          });
-          
-          console.log('✅ Transfer confirmed:', {
-            hash,
-            status: receipt.status,
-            token: token.symbol,
-            amount: formatUnits(amountToTransfer, decimals),
-          });
-          
-        } catch (error) {
-          console.error('❌ Pre-transfer failed:', error);
-          toast.error(`Failed to transfer ${token.symbol} to router`);
-          setIsLoading(false);
-          closeModal();
-          return;
-        }
-      }
-      
-      console.groupEnd();
-    }
 
     // For Universal Router, we need to adjust checks:
-    // - No approvals needed (tokens pre-transferred or ETH sent with tx.value)
-    // - Input token balance already changed during pre-transfer (or ETH with tx.value)
+    // - For token input: Add pre-transfer items to approvals (proxy will transfer from user → router)
+    // - For ETH input: No approvals needed (ETH comes with tx.value)
     // - Only output token balance will change during proxy execution
     // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
     let diffsToUse = checks.diffs;
@@ -1253,11 +1175,15 @@ export const TxOptions = () => {
         // No withdrawal checks - proxy doesn't hold the tokens
         withdrawalsToUse = [];
       } else {
-        // Token input: Pre-transferred to router
-        // No approval checks needed - tokens are already in the router
-        approvalsToUse = [];
+        // Token input: Add pre-transfer to approvals array
+        // The proxy will transfer tokens from user → router in the same transaction
+        // Change target to Universal Router address for pre-transfer
+        approvalsToUse = tokenApprovals.map(approval => ({
+          ...approval,
+          target: uniswapRouter.address, // Proxy will transfer to router, not approve proxy
+        }));
         
-        // Filter out negative diffs (input tokens) - their balance already changed
+        // Filter out negative diffs (input tokens) - their balance will change from proxy transfer
         diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
         
         // No withdrawal checks needed for any token - diffs check is sufficient
@@ -1280,12 +1206,10 @@ export const TxOptions = () => {
         transformToMetadata(withdrawalsToUse, publicClient),
       ]);
 
-    // For Universal Router, we pre-transfer tokens, so we need useTransferFlags = true
-    // This tells the proxy to transfer tokens to the router instead of approving
-    const useTransferFlags = approvals.map(() => true);
-    // For now, use default approve behavior for pre-transfers (false)
-    // TODO: Move to pre-transfer logic with true once everything works
-    const preTransferFlags = approvals.map(() => false);
+    // For Universal Router with token input: use transfer (true) so proxy transfers tokens to router
+    // For everything else: use approve (false) - default behavior
+    const transferFlags = approvals.map(() => isUniversalRouter && !hasWrapEthCommand);
+    const preTransferFlags = preTransfers.map(() => false); // Default approve for pre/post mode
 
     try {
       let hash: `0x${string}` = '0x';
@@ -1299,7 +1223,7 @@ export const TxOptions = () => {
                 return encodeFunctionData({
                   abi: proxy.abi,
                   functionName: 'proxyCallMetadataCalldataDiffs',
-                  args: [diffs, approvals, useTransferFlags, tx.to, data, withdrawals],
+                  args: [diffs, approvals, transferFlags, tx.to, data, withdrawals],
                 });
               }
               case EMode['pre/post']: {
@@ -1350,7 +1274,7 @@ export const TxOptions = () => {
               abi: proxy.abi,
               address: proxy.address,
               functionName: 'proxyCallMetadataCalldataDiffs',
-              args: [diffs, approvals, useTransferFlags, tx.to, data, withdrawals],
+              args: [diffs, approvals, transferFlags, tx.to, data, withdrawals],
               value: value,
               maxFeePerGas: 200_000n,
             });
