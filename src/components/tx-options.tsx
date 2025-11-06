@@ -280,50 +280,38 @@ export const TxOptions = () => {
       return;
     }
 
+    
+    let retries = 100;
+
     let simRes;
-    try {
-      simRes = await publicClient.simulateCalls({
-        traceAssetChanges: true,
-        account: address,
-        calls: [
-          {
-            to: tx.to as `0x${string}`,
-            data: tx.data as `0x${string}`,
-            value: BigInt(tx.value || 0),
-          },
-        ],
-      });
-    } catch (error) {
-      console.warn('⚠️ Simulation failed:', error);
-      console.log(
-        '💡 Please manually configure approval and withdrawal checks'
-      );
 
-      // Create empty checks for manual configuration
-      if (!checks.approvals.length) {
-        createApprovalCheck();
-      }
-      if (!checks.withdrawals.length) {
-        createWithdrawalCheck();
-      }
+    while (retries > 0) {
+      try {
+        simRes = await publicClient.simulateCalls({
+          traceAssetChanges: true,
+          account: address,
+          calls: [
+            {
+              to: tx.to as `0x${string}`,
+              data: tx.data as `0x${string}`,
+              value: BigInt(tx.value || 0),
+            },
+          ],
+        });
 
-      switch (mode) {
-        case 'diifs': {
-          if (!checks.diffs.length) {
-            createDiffsCheck();
-            createDiffsCheck();
-          }
-          break;
-        }
-        case EMode['pre/post']: {
-          if (!checks.postTransfer.length) {
-            createPostTransferCheck();
-          }
-          break;
-        }
-      }
+        break;
+      } catch (error) {
+        console.warn('⚠️ Simulation failed:', error);
+        console.log(
+          '💡 Please manually configure approval and withdrawal checks'
+        );
 
-      return; // Exit early if simulation fails
+        retries -= 1;
+      }
+    }
+
+    if (!simRes) {
+      return;
     }
 
     const from = simRes.assetChanges.find((asset) => {
@@ -494,7 +482,7 @@ export const TxOptions = () => {
       }
     }
   };
-  
+
   useEffect(() => {
     setDataToForm();
   }, [tx, address, slippage, mode]);
@@ -509,35 +497,40 @@ export const TxOptions = () => {
 
     const proxy = getProxyContract(chainId);
     const uniswapRouter = getUniswapRouterContract(chainId);
-    
+
     // Check if this is a Universal Router transaction
-    const isUniversalRouter = tx.to?.toLowerCase() === uniswapRouter.address.toLowerCase();
-    
+    const isUniversalRouter =
+      tx.to?.toLowerCase() === uniswapRouter.address.toLowerCase();
+
     if (isUniversalRouter) {
       console.group('🔍 Universal Router Transaction Debug');
       console.log('Transaction to:', tx.to);
       console.log('Transaction data:', tx.data);
       console.log('Transaction value:', tx.value);
-      
+
       try {
         // Decode Universal Router calldata
         const decoded = decodeFunctionData({
           abi: uniswapRouter.abi,
           data: tx.data as `0x${string}`,
         });
-        
+
         console.log('📦 Decoded function:', decoded.functionName);
         console.log('📦 Decoded args:', decoded.args);
-        
+
         // Parse execute() function - format: execute(bytes commands, bytes[] inputs, uint256 deadline)
         if (decoded.functionName === 'execute' && decoded.args) {
-          const [commands, inputs, deadline] = decoded.args as [string, string[], bigint];
-          
+          const [commands, inputs, deadline] = decoded.args as [
+            string,
+            string[],
+            bigint,
+          ];
+
           console.log('🎯 Commands (hex):', commands);
           console.log('🎯 Number of commands:', (commands.length - 2) / 2); // Remove 0x and divide by 2
           console.log('🎯 Inputs array length:', inputs.length);
           console.log('🎯 Deadline:', deadline);
-          
+
           // Parse each command byte
           const commandBytes = commands.slice(2); // Remove 0x
           const commandList = [];
@@ -545,9 +538,9 @@ export const TxOptions = () => {
             const commandByte = parseInt(commandBytes.substr(i, 2), 16);
             commandList.push(commandByte);
           }
-          
+
           console.log('🎯 Command bytes:', commandList);
-          
+
           // Map command bytes to names
           const COMMAND_NAMES: { [key: number]: string } = {
             0x00: 'V3_SWAP_EXACT_IN',
@@ -566,13 +559,15 @@ export const TxOptions = () => {
             0x10: 'V4_SWAP',
             0x11: 'LOOKS_RARE_721',
           };
-          
+
           console.group('📋 Commands breakdown:');
           commandList.forEach((cmd, idx) => {
-            console.log(`  ${idx}: 0x${cmd.toString(16).padStart(2, '0')} - ${COMMAND_NAMES[cmd] || 'UNKNOWN'}`);
+            console.log(
+              `  ${idx}: 0x${cmd.toString(16).padStart(2, '0')} - ${COMMAND_NAMES[cmd] || 'UNKNOWN'}`
+            );
           });
           console.groupEnd();
-          
+
           // Log each input
           console.group('📋 Inputs breakdown:');
           inputs.forEach((input, idx) => {
@@ -581,51 +576,59 @@ export const TxOptions = () => {
           });
           console.groupEnd();
         }
-        
       } catch (error) {
         console.error('❌ Failed to decode Universal Router calldata:', error);
       }
-      
+
       console.groupEnd();
     }
-    
+
     // Modify Universal Router calldata for proxy execution
     let data = tx.data;
-    
+
     if (isUniversalRouter) {
       console.group('🔧 Modifying Universal Router calldata');
-      
+
       try {
         // Decode the current calldata
         const decoded = decodeFunctionData({
           abi: uniswapRouter.abi,
           data: tx.data as `0x${string}`,
         });
-        
+
         if (decoded.functionName === 'execute' && decoded.args) {
-          const [commands, inputs, deadline] = decoded.args as [string, string[], bigint];
-          
+          const [commands, inputs, deadline] = decoded.args as [
+            string,
+            string[],
+            bigint,
+          ];
+
           // Parse command bytes
           const commandBytes = commands.slice(2);
           const commandList: number[] = [];
           for (let i = 0; i < commandBytes.length; i += 2) {
             commandList.push(parseInt(commandBytes.substr(i, 2), 16));
           }
-          
-          console.log('Original commands:', commandList.map(c => '0x' + c.toString(16).padStart(2, '0')));
+
+          console.log(
+            'Original commands:',
+            commandList.map((c) => '0x' + c.toString(16).padStart(2, '0'))
+          );
           console.log('Original inputs count:', inputs.length);
-          
+
           const newCommands = [...commandList];
           const newInputs = [...inputs];
-          
+
           // Find and remove PERMIT2_PERMIT (0x0a) command
           const permit2PermitIndex = commandList.indexOf(0x0a);
           if (permit2PermitIndex !== -1) {
-            console.log(`🗑️  Removing PERMIT2_PERMIT command at index ${permit2PermitIndex}`);
+            console.log(
+              `🗑️  Removing PERMIT2_PERMIT command at index ${permit2PermitIndex}`
+            );
             newCommands.splice(permit2PermitIndex, 1);
             newInputs.splice(permit2PermitIndex, 1);
           }
-          
+
           // Check if there's an UNWRAP_WETH (0x0c) command
           // If present, keep swap recipient as router so UNWRAP_WETH can work
           // If not present, set swap recipient to user
@@ -633,58 +636,64 @@ export const TxOptions = () => {
           const hasWrapEth = newCommands.indexOf(0x0b) !== -1;
           const hasPayPortion = newCommands.indexOf(0x06) !== -1;
           const hasSweep = newCommands.indexOf(0x04) !== -1;
-          
+
           // If any of these commands exist after the swap, tokens should stay in router
           const shouldKeepInRouter = hasUnwrapWeth || hasPayPortion || hasSweep;
-          
+
           console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
           console.log(`Has WRAP_ETH: ${hasWrapEth}`);
           console.log(`Has PAY_PORTION: ${hasPayPortion}`);
           console.log(`Has SWEEP: ${hasSweep}`);
           console.log(`Should keep tokens in router: ${shouldKeepInRouter}`);
-          
+
           // Modify swap commands to use pre-transferred tokens
           for (let i = 0; i < newCommands.length; i++) {
             const command = newCommands[i];
-            
+
             // V4_SWAP (0x10) - Handle nested action plan
             if (command === 0x10) {
               console.log('🔵 Modifying V4_SWAP at index', i);
-              
+
               try {
                 const v4Input = newInputs[i];
-                
+
                 // V4 input structure: abi.encode(bytes actions, bytes[] params)
                 // This is encoded as two top-level parameters, not nested
-                
-                console.log('V4 input (first 400 chars):', v4Input.slice(0, 400));
-                
+
+                console.log(
+                  'V4 input (first 400 chars):',
+                  v4Input.slice(0, 400)
+                );
+
                 // Decode the V4 plan: (bytes actions, bytes[] params)
                 // Actions is a bytes string where each byte is an action ID
                 // Params is an array of bytes, one for each action
                 const planDecoded = decodeAbiParameters(
                   [
                     { name: 'actions', type: 'bytes' },
-                    { name: 'params', type: 'bytes[]' }
+                    { name: 'params', type: 'bytes[]' },
                   ],
                   v4Input as `0x${string}`
                 );
-                
+
                 const actionsBytes = planDecoded[0];
                 const params = planDecoded[1];
-                
+
                 console.log('Actions bytes:', actionsBytes);
                 console.log('Params count:', params.length);
-                
+
                 // Parse actions
                 const actions: number[] = [];
                 const actionsHex = actionsBytes.slice(2); // Remove 0x
                 for (let j = 0; j < actionsHex.length; j += 2) {
                   actions.push(parseInt(actionsHex.slice(j, j + 2), 16));
                 }
-                
-                console.log('V4 Actions:', actions.map(a => `0x${a.toString(16).padStart(2, '0')}`));
-                
+
+                console.log(
+                  'V4 Actions:',
+                  actions.map((a) => `0x${a.toString(16).padStart(2, '0')}`)
+                );
+
                 // V4 Action IDs (from v4-periphery Actions.sol)
                 // Correct action IDs based on actual v4-periphery implementation:
                 const V4_ACTIONS = {
@@ -692,7 +701,7 @@ export const TxOptions = () => {
                   SWAP_EXACT_IN: 0x07,
                   SWAP_EXACT_OUT_SINGLE: 0x08,
                   SWAP_EXACT_OUT: 0x09,
-                  SETTLE: 0x0b,           // ← CORRECT ID!
+                  SETTLE: 0x0b, // ← CORRECT ID!
                   SETTLE_ALL: 0x0c,
                   SETTLE_PAIR: 0x0d,
                   TAKE: 0x0e,
@@ -700,56 +709,66 @@ export const TxOptions = () => {
                   TAKE_PORTION: 0x10,
                   TAKE_PAIR: 0x11,
                 };
-                
+
                 // Modify SETTLE actions to use router's balance instead of Permit2
                 const modifiedParams: `0x${string}`[] = [];
                 let modified = false;
-                
+
                 for (let j = 0; j < actions.length; j++) {
                   const action = actions[j];
                   const param = params[j];
-                  
-                  console.log(`Action ${j}: 0x${action.toString(16).padStart(2, '0')}, param length: ${param.length}`);
-                  
+
+                  console.log(
+                    `Action ${j}: 0x${action.toString(16).padStart(2, '0')}, param length: ${param.length}`
+                  );
+
                   // Check if this is a SETTLE action that needs modification
                   // SETTLE action structure: (Currency currency, uint256 amount, bool payerIsUser)
                   if (action === V4_ACTIONS.SETTLE) {
-                    console.log(`  → Found SETTLE action (0x0b), attempting to modify payerIsUser`);
-                    
+                    console.log(
+                      `  → Found SETTLE action (0x0b), attempting to modify payerIsUser`
+                    );
+
                     try {
                       // Decode SETTLE params: (address currency, uint256 amount, bool payerIsUser)
                       const settleParams = decodeAbiParameters(
                         [
                           { name: 'currency', type: 'address' },
                           { name: 'amount', type: 'uint256' },
-                          { name: 'payerIsUser', type: 'bool' }
+                          { name: 'payerIsUser', type: 'bool' },
                         ],
                         param as `0x${string}`
                       );
-                      
+
                       const [currency, amount, payerIsUser] = settleParams;
                       console.log('  → Original SETTLE params:', {
                         currency,
                         amount: amount.toString(),
-                        payerIsUser
+                        payerIsUser,
                       });
-                      
+
                       // Re-encode with payerIsUser = false
                       const newParam = encodeAbiParameters(
                         [
                           { name: 'currency', type: 'address' },
                           { name: 'amount', type: 'uint256' },
-                          { name: 'payerIsUser', type: 'bool' }
+                          { name: 'payerIsUser', type: 'bool' },
                         ],
-                        [currency, amount, false]  // ← Change payerIsUser to false
+                        [currency, amount, false] // ← Change payerIsUser to false
                       );
-                      
+
                       modifiedParams.push(newParam);
                       modified = true;
-                      console.log('  → Modified payerIsUser from', payerIsUser, 'to false ✅');
-                      
+                      console.log(
+                        '  → Modified payerIsUser from',
+                        payerIsUser,
+                        'to false ✅'
+                      );
                     } catch (error) {
-                      console.error('  → Failed to decode/modify SETTLE action:', error);
+                      console.error(
+                        '  → Failed to decode/modify SETTLE action:',
+                        error
+                      );
                       console.error('  → Param data:', param);
                       // Keep original param as fallback
                       modifiedParams.push(param as `0x${string}`);
@@ -758,79 +777,98 @@ export const TxOptions = () => {
                   // SETTLE_ALL action: (Currency currency, uint256 maxAmount)
                   // Note: SETTLE_ALL doesn't have payerIsUser, it always uses payer from context
                   else if (action === V4_ACTIONS.SETTLE_ALL) {
-                    console.log('  → Found SETTLE_ALL action (0x0c) - no modification needed');
+                    console.log(
+                      '  → Found SETTLE_ALL action (0x0c) - no modification needed'
+                    );
                     modifiedParams.push(param as `0x${string}`);
                   }
                   // SETTLE_PAIR action: (Currency currency0, Currency currency1)
                   else if (action === V4_ACTIONS.SETTLE_PAIR) {
-                    console.log('  → Found SETTLE_PAIR action (0x0d) - no modification needed');
+                    console.log(
+                      '  → Found SETTLE_PAIR action (0x0d) - no modification needed'
+                    );
                     modifiedParams.push(param as `0x${string}`);
-                  }
-                  else {
+                  } else {
                     // Other actions (SWAP, TAKE, etc.) - keep as-is
-                    console.log(`  → Action 0x${action.toString(16).padStart(2, '0')} - keeping unchanged`);
+                    console.log(
+                      `  → Action 0x${action.toString(16).padStart(2, '0')} - keeping unchanged`
+                    );
                     modifiedParams.push(param as `0x${string}`);
                   }
                 }
-                
+
                 if (modified) {
                   console.log('✅ Modified V4 plan, re-encoding...');
-                  
+
                   // Re-encode the plan with modified params
                   const newV4Input = encodeAbiParameters(
                     [
                       { name: 'actions', type: 'bytes' },
-                      { name: 'params', type: 'bytes[]' }
+                      { name: 'params', type: 'bytes[]' },
                     ],
                     [actionsBytes, modifiedParams]
                   );
-                  
+
                   newInputs[i] = newV4Input;
                   console.log('✅ V4_SWAP modified successfully');
                   console.log('New V4 input length:', newV4Input.length);
-                  
                 } else {
-                  console.warn('⚠️ No SETTLE actions found or modified in V4 plan');
-                  console.warn('⚠️ Transaction may fail - V4 will try to use Permit2');
-                  toast.error('V4 transaction may fail: No SETTLE actions could be modified for pre-transfer.');
+                  console.warn(
+                    '⚠️ No SETTLE actions found or modified in V4 plan'
+                  );
+                  console.warn(
+                    '⚠️ Transaction may fail - V4 will try to use Permit2'
+                  );
+                  toast.error(
+                    'V4 transaction may fail: No SETTLE actions could be modified for pre-transfer.'
+                  );
                 }
-                
               } catch (error) {
                 console.error('❌ Failed to process V4_SWAP:', error);
                 console.error('Error details:', error);
-                toast.error('Failed to process V4 swap. The transaction may still work with pre-transfer.');
+                toast.error(
+                  'Failed to process V4 swap. The transaction may still work with pre-transfer.'
+                );
                 // Don't return - let it continue with unmodified input
               }
-              
+
               // Continue to next command
               continue;
             }
-            
+
             // V3_SWAP_EXACT_IN (0x00) or V3_SWAP_EXACT_OUT (0x01)
             if (command === 0x00 || command === 0x01) {
-              const commandName = command === 0x00 ? 'V3_SWAP_EXACT_IN' : 'V3_SWAP_EXACT_OUT';
+              const commandName =
+                command === 0x00 ? 'V3_SWAP_EXACT_IN' : 'V3_SWAP_EXACT_OUT';
               console.log(`🔄 Modifying ${commandName} at index ${i}`);
-              
+
               const swapInput = newInputs[i];
               const inputData = '0x' + swapInput.slice(2);
-              
+
               // Parse current values
               // Structure for both: (address recipient, uint256 amount1, uint256 amount2, bytes path, bool payerIsUser)
               const recipient = '0x' + inputData.slice(2, 66).slice(24);
               const amount1 = '0x' + inputData.slice(66, 130);
               const amount2 = '0x' + inputData.slice(130, 194);
               const pathOffset = '0x' + inputData.slice(194, 258);
-              const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
-              
+              const payerIsUserOld =
+                BigInt('0x' + inputData.slice(258, 322)) === 1n;
+
               console.log('Old recipient:', recipient);
               console.log('Old payerIsUser:', payerIsUserOld);
-              
+
               // Get the actual path data
               const pathOffsetInt = parseInt(pathOffset, 16);
-              const pathLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
+              const pathLengthHex = inputData.slice(
+                2 + pathOffsetInt * 2,
+                2 + pathOffsetInt * 2 + 64
+              );
               const pathLength = parseInt(pathLengthHex, 16);
-              const pathData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathLength * 2);
-              
+              const pathData = inputData.slice(
+                2 + pathOffsetInt * 2 + 64,
+                2 + pathOffsetInt * 2 + 64 + pathLength * 2
+              );
+
               // Construct new input with:
               // 1. Recipient = ADDRESS_THIS (router) if there are downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
               //    Otherwise send directly to user
@@ -838,57 +876,72 @@ export const TxOptions = () => {
               let newRecipient: string;
               if (shouldKeepInRouter) {
                 // Keep tokens in router for downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
-                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
-                console.log('New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands');
+                newRecipient =
+                  '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
+                console.log(
+                  'New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands'
+                );
               } else {
                 // No downstream commands, send directly to user
-                newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+                newRecipient = address!
+                  .slice(2)
+                  .toLowerCase()
+                  .padStart(64, '0');
                 console.log('New recipient:', '0x' + newRecipient.slice(24));
               }
               const newPayerIsUser = '0'.padStart(64, '0'); // false
-              
+
               console.log('New payerIsUser:', false);
-              
+
               // Reconstruct the input
               // Structure: recipient (32 bytes) + amount1 (32 bytes) + amount2 (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + path
-              const newInput = '0x' + 
-                newRecipient + 
-                amount1.slice(2) + 
-                amount2.slice(2) + 
-                pathOffset.slice(2) + 
-                newPayerIsUser + 
-                pathLengthHex + 
+              const newInput =
+                '0x' +
+                newRecipient +
+                amount1.slice(2) +
+                amount2.slice(2) +
+                pathOffset.slice(2) +
+                newPayerIsUser +
+                pathLengthHex +
                 pathData;
-              
+
               newInputs[i] = newInput;
               console.log(`✅ Modified ${commandName} input`);
             }
-            
+
             // V2_SWAP_EXACT_IN (0x08) or V2_SWAP_EXACT_OUT (0x09)
             if (command === 0x08 || command === 0x09) {
-              const commandName = command === 0x08 ? 'V2_SWAP_EXACT_IN' : 'V2_SWAP_EXACT_OUT';
+              const commandName =
+                command === 0x08 ? 'V2_SWAP_EXACT_IN' : 'V2_SWAP_EXACT_OUT';
               console.log(`🔄 Modifying ${commandName} at index ${i}`);
-              
+
               const swapInput = newInputs[i];
               const inputData = '0x' + swapInput.slice(2);
-              
+
               // Parse current values
               // Structure for both: (address recipient, uint256 amount1, uint256 amount2, address[] path, bool payerIsUser)
               const recipient = '0x' + inputData.slice(2, 66).slice(24);
               const amount1 = '0x' + inputData.slice(66, 130);
               const amount2 = '0x' + inputData.slice(130, 194);
               const pathOffset = '0x' + inputData.slice(194, 258);
-              const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
-              
+              const payerIsUserOld =
+                BigInt('0x' + inputData.slice(258, 322)) === 1n;
+
               console.log('Old recipient:', recipient);
               console.log('Old payerIsUser:', payerIsUserOld);
-              
+
               // Get the actual path data (address[] array)
               const pathOffsetInt = parseInt(pathOffset, 16);
-              const pathArrayLengthHex = inputData.slice(2 + pathOffsetInt * 2, 2 + pathOffsetInt * 2 + 64);
+              const pathArrayLengthHex = inputData.slice(
+                2 + pathOffsetInt * 2,
+                2 + pathOffsetInt * 2 + 64
+              );
               const pathArrayLength = parseInt(pathArrayLengthHex, 16);
-              const pathArrayData = inputData.slice(2 + pathOffsetInt * 2 + 64, 2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64);
-              
+              const pathArrayData = inputData.slice(
+                2 + pathOffsetInt * 2 + 64,
+                2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64
+              );
+
               // Construct new input with:
               // 1. Recipient = ADDRESS_THIS (router) if there are downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
               //    Otherwise send directly to user
@@ -896,59 +949,70 @@ export const TxOptions = () => {
               let newRecipient: string;
               if (shouldKeepInRouter) {
                 // Keep tokens in router for downstream commands (PAY_PORTION, SWEEP, UNWRAP_WETH)
-                newRecipient = '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
-                console.log('New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands');
+                newRecipient =
+                  '0000000000000000000000000000000000000000000000000000000000000002'; // MSG_SENDER/ADDRESS_THIS constant
+                console.log(
+                  'New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands'
+                );
               } else {
                 // No downstream commands, send directly to user
-                newRecipient = address!.slice(2).toLowerCase().padStart(64, '0');
+                newRecipient = address!
+                  .slice(2)
+                  .toLowerCase()
+                  .padStart(64, '0');
                 console.log('New recipient:', '0x' + newRecipient.slice(24));
               }
               const newPayerIsUser = '0'.padStart(64, '0'); // false
-              
+
               console.log('New payerIsUser:', false);
-              
+
               // Reconstruct the input
               // Structure: recipient (32 bytes) + amount1 (32 bytes) + amount2 (32 bytes) + pathOffset (32 bytes) + payerIsUser (32 bytes) + pathArray
-              const newInput = '0x' + 
-                newRecipient + 
-                amount1.slice(2) + 
-                amount2.slice(2) + 
-                pathOffset.slice(2) + 
-                newPayerIsUser + 
-                pathArrayLengthHex + 
+              const newInput =
+                '0x' +
+                newRecipient +
+                amount1.slice(2) +
+                amount2.slice(2) +
+                pathOffset.slice(2) +
+                newPayerIsUser +
+                pathArrayLengthHex +
                 pathArrayData;
-              
+
               newInputs[i] = newInput;
               console.log(`✅ Modified ${commandName} input`);
             }
           }
-          
+
           // Encode new commands bytes
-          const newCommandsHex = '0x' + newCommands.map(c => c.toString(16).padStart(2, '0')).join('');
-          
+          const newCommandsHex =
+            '0x' +
+            newCommands.map((c) => c.toString(16).padStart(2, '0')).join('');
+
           console.log('New commands:', newCommandsHex);
           console.log('New inputs count:', newInputs.length);
-          
+
           // Re-encode the function call
           const newData = encodeFunctionData({
             abi: uniswapRouter.abi,
             functionName: 'execute',
-            args: [newCommandsHex as `0x${string}`, newInputs as `0x${string}`[], deadline],
+            args: [
+              newCommandsHex as `0x${string}`,
+              newInputs as `0x${string}`[],
+              deadline,
+            ],
           });
-          
+
           console.log('✅ Successfully modified calldata');
           console.log('Old data length:', tx.data.length);
           console.log('New data length:', newData.length);
-          
+
           data = newData;
-          
         }
-        
       } catch (error) {
         console.error('❌ Failed to modify Universal Router calldata:', error);
         console.error(error);
       }
-      
+
       console.groupEnd();
     } else {
       data = tx.data;
@@ -1156,42 +1220,42 @@ export const TxOptions = () => {
     let diffsToUse = checks.diffs;
     let approvalsToUse = tokenApprovals;
     let withdrawalsToUse = checks.withdrawals;
-    
+
     if (isUniversalRouter) {
       console.log('🔧 Adjusting checks for Universal Router');
       console.log('Original diffs:', checks.diffs);
       console.log('Original approvals:', tokenApprovals);
       console.log('Original withdrawals:', checks.withdrawals);
       console.log('Has WRAP_ETH:', hasWrapEthCommand);
-      
+
       if (hasWrapEthCommand) {
         // ETH input: No pre-transfer, ETH comes with tx.value
         // No approval checks needed
         approvalsToUse = [];
-        
+
         // Keep all diffs (ETH decrease will be from tx.value, not from balance change)
         // Filter to only positive diffs (output token increase)
-        diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
-        
+        diffsToUse = checks.diffs.filter((diff) => diff.balance >= 0);
+
         // No withdrawal checks - proxy doesn't hold the tokens
         withdrawalsToUse = [];
       } else {
         // Token input: Add pre-transfer to approvals array
         // The proxy will transfer tokens from user → router in the same transaction
         // Change target to Universal Router address for pre-transfer
-        approvalsToUse = tokenApprovals.map(approval => ({
+        approvalsToUse = tokenApprovals.map((approval) => ({
           ...approval,
           target: uniswapRouter.address, // Proxy will transfer to router, not approve proxy
         }));
-        
+
         // Filter out negative diffs (input tokens) - their balance will change from proxy transfer
-        diffsToUse = checks.diffs.filter(diff => diff.balance >= 0);
-        
+        diffsToUse = checks.diffs.filter((diff) => diff.balance >= 0);
+
         // No withdrawal checks needed for any token - diffs check is sufficient
         // Withdrawal checks try to send tokens which the proxy doesn't have
         withdrawalsToUse = [];
       }
-      
+
       console.log('Adjusted approvals:', approvalsToUse);
       console.log('Adjusted diffs (output only):', diffsToUse);
       console.log('Adjusted withdrawals:', withdrawalsToUse);
@@ -1209,7 +1273,9 @@ export const TxOptions = () => {
 
     // For Universal Router with token input: use transfer (true) so proxy transfers tokens to router
     // For everything else: use approve (false) - default behavior
-    const transferFlags = approvals.map(() => isUniversalRouter && !hasWrapEthCommand);
+    const transferFlags = approvals.map(
+      () => isUniversalRouter && !hasWrapEthCommand
+    );
     const preTransferFlags = preTransfers.map(() => false); // Default approve for pre/post mode
 
     try {
@@ -1224,7 +1290,14 @@ export const TxOptions = () => {
                 return encodeFunctionData({
                   abi: proxy.abi,
                   functionName: 'proxyCallMetadataCalldataDiffs',
-                  args: [diffs, approvals, transferFlags, tx.to, data, withdrawals],
+                  args: [
+                    diffs,
+                    approvals,
+                    transferFlags,
+                    tx.to,
+                    data,
+                    withdrawals,
+                  ],
                 });
               }
               case EMode['pre/post']: {
@@ -1331,7 +1404,8 @@ export const TxOptions = () => {
     } catch (error) {
       console.error('❌ Transaction failed with error:', error);
       console.error('Error details:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
       toast.error(`Transaction failed: ${errorMessage}`);
       closeModal();
       resetCheckState();
@@ -1514,10 +1588,10 @@ export const TxOptions = () => {
               {checks.withdrawals
                 .filter((check) => check.token != '')
                 .map((check) => (
-                <p key={check.token} className="text-lg font-bold">
-                  + {check.balance.toFixed(6)} {check.symbol}
-                </p>
-              ))}
+                  <p key={check.token} className="text-lg font-bold">
+                    + {check.balance.toFixed(6)} {check.symbol}
+                  </p>
+                ))}
             </div>
           </div>
         )}
