@@ -1217,13 +1217,11 @@ export const TxOptions = () => {
     // - For ETH input: No approvals needed (ETH comes with tx.value)
     // - Only output token balance will change during proxy execution
     // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
-    let diffsToUse = checks.diffs;
     let approvalsToUse = tokenApprovals;
     let withdrawalsToUse = checks.withdrawals;
 
     if (isUniversalRouter) {
       console.log('🔧 Adjusting checks for Universal Router');
-      console.log('Original diffs:', checks.diffs);
       console.log('Original approvals:', tokenApprovals);
       console.log('Original withdrawals:', checks.withdrawals);
       console.log('Has WRAP_ETH:', hasWrapEthCommand);
@@ -1232,10 +1230,6 @@ export const TxOptions = () => {
         // ETH input: No pre-transfer, ETH comes with tx.value
         // No approval checks needed
         approvalsToUse = [];
-
-        // Keep all diffs (ETH decrease will be from tx.value, not from balance change)
-        // Filter to only positive diffs (output token increase)
-        diffsToUse = checks.diffs.filter((diff) => diff.balance >= 0);
 
         // No withdrawal checks - proxy doesn't hold the tokens
         withdrawalsToUse = [];
@@ -1248,16 +1242,12 @@ export const TxOptions = () => {
           target: uniswapRouter.address, // Proxy will transfer to router, not approve proxy
         }));
 
-        // Filter out negative diffs (input tokens) - their balance will change from proxy transfer
-        diffsToUse = checks.diffs.filter((diff) => diff.balance >= 0);
-
         // No withdrawal checks needed for any token - diffs check is sufficient
         // Withdrawal checks try to send tokens which the proxy doesn't have
         withdrawalsToUse = [];
       }
 
       console.log('Adjusted approvals:', approvalsToUse);
-      console.log('Adjusted diffs (output only):', diffsToUse);
       console.log('Adjusted withdrawals:', withdrawalsToUse);
     }
 
@@ -1266,7 +1256,7 @@ export const TxOptions = () => {
         transformToMetadata(checks.postTransfer, publicClient),
         transformToMetadata(checks.preTransfer, publicClient),
 
-        transformToMetadata(diffsToUse, publicClient),
+        transformToMetadata(checks.diffs, publicClient),
         transformToMetadata(approvalsToUse, publicClient),
         transformToMetadata(withdrawalsToUse, publicClient),
       ]);

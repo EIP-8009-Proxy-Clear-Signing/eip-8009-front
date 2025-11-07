@@ -200,11 +200,15 @@ export function ImpersonatorIframe() {
 
         case Methods.signTypedMessage: {
           console.log('< < < known method:', 'signTypedMessage', event);
+
           try {
             console.log('signTypedMessage > ', params);
             const { typedData } = params as any;
-            const data = {signature:  await walletClient.signTypedData(typedData)}
-            sendMessageToIFrame({ eventID, data});
+            const data = {
+              signature: await walletClient.signTypedData(typedData),
+            };
+            console.log('signTypedMessage > data', data);
+            sendMessageToIFrame({ eventID, data });
             return;
           } catch (error) {
             console.log('event > signTypedMessage > error', error);
