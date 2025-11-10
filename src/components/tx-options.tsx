@@ -1263,10 +1263,15 @@ export const TxOptions = () => {
 
     // For Universal Router with token input: use transfer (true) so proxy transfers tokens to router
     // For everything else: use approve (false) - default behavior
-    const transferFlags = approvals.map(
-      () => isUniversalRouter && !hasWrapEthCommand
-    );
-    const preTransferFlags = preTransfers.map(() => false); // Default approve for pre/post mode
+    const approvalsWithFlags = approvals.map((approval) => ({
+      balance: approval.balance,
+      useTransfer: isUniversalRouter && !hasWrapEthCommand,
+    }));
+    
+    const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
+      balance: preTransfer.balance,
+      useTransfer: false, // Default approve for pre/post mode
+    }));
 
     try {
       let hash: `0x${string}` = '0x';
@@ -1279,28 +1284,26 @@ export const TxOptions = () => {
               case EMode.diifs: {
                 return encodeFunctionData({
                   abi: proxy.abi,
-                  functionName: 'proxyCallMetadataCalldataDiffs',
+                  functionName: 'proxyCallDiffs',
                   args: [
-                    diffs,
-                    approvals,
-                    transferFlags,
+                    diffs.map(d => d.balance),
+                    approvalsWithFlags,
                     tx.to,
                     data,
-                    withdrawals,
+                    withdrawals.map(w => w.balance),
                   ],
                 });
               }
               case EMode['pre/post']: {
                 return encodeFunctionData({
                   abi: proxy.abi,
-                  functionName: 'proxyCallMetadataCalldata',
+                  functionName: 'proxyCall',
                   args: [
-                    postTransfers,
-                    preTransfers,
-                    preTransferFlags,
+                    postTransfers.map(p => p.balance),
+                    preTransfersWithFlags,
                     tx.to,
                     data,
-                    withdrawals,
+                    withdrawals.map(w => w.balance),
                   ],
                 });
               }
@@ -1337,8 +1340,14 @@ export const TxOptions = () => {
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
-              functionName: 'proxyCallMetadataCalldataDiffs',
-              args: [diffs, approvals, transferFlags, tx.to, data, withdrawals],
+              functionName: 'proxyCallDiffs',
+              args: [
+                diffs.map(d => d.balance),
+                approvalsWithFlags,
+                tx.to,
+                data,
+                withdrawals.map(w => w.balance),
+              ],
               value: value,
               maxFeePerGas: 200_000n,
             });
@@ -1350,14 +1359,13 @@ export const TxOptions = () => {
             hash = await writeContractAsync({
               abi: proxy.abi,
               address: proxy.address,
-              functionName: 'proxyCallMetadataCalldata',
+              functionName: 'proxyCall',
               args: [
-                postTransfers,
-                preTransfers,
-                preTransferFlags,
+                postTransfers.map(p => p.balance),
+                preTransfersWithFlags,
                 tx.to,
                 data,
-                withdrawals,
+                withdrawals.map(w => w.balance),
               ],
               value: value,
             });
