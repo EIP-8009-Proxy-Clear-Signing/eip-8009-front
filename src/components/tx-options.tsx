@@ -31,7 +31,11 @@ import {
   usePublicClient,
   useWriteContract,
 } from 'wagmi';
-import { getProxyContract, getUniswapRouterContract } from '@/lib/contracts';
+import {
+  getProxyContract,
+  getProxyApproveRouterContract,
+  getUniswapRouterContract,
+} from '@/lib/contracts';
 import {
   Abi,
   decodeFunctionData,
@@ -280,7 +284,6 @@ export const TxOptions = () => {
       return;
     }
 
-    
     let retries = 100;
 
     let simRes;
@@ -496,6 +499,7 @@ export const TxOptions = () => {
     }
 
     const proxy = getProxyContract(chainId);
+    const approveRouter = getProxyApproveRouterContract(chainId);
     const uniswapRouter = getUniswapRouterContract(chainId);
 
     // Check if this is a Universal Router transaction
@@ -1064,10 +1068,103 @@ export const TxOptions = () => {
         check.token !== ethAddress
     );
 
+    
+
+    // Detect if transaction has WRAP_ETH command (ETH input - comes with tx.value)
+    let hasWrapEthCommand = false;
+    if (isUniversalRouter) {
+      try {
+        const decoded = decodeFunctionData({
+          abi: uniswapRouter.abi,
+          data: tx.data as `0x${string}`,
+        });
+        if (decoded.functionName === 'execute' && decoded.args) {
+          const [commands] = decoded.args as [string, string[], bigint];
+          const commandBytes = commands.slice(2);
+          for (let i = 0; i < commandBytes.length; i += 2) {
+            if (parseInt(commandBytes.substr(i, 2), 16) === 0x0b) {
+              hasWrapEthCommand = true;
+              break;
+            }
+          }
+        }
+      } catch {
+        // Ignore decode errors
+      }
+    }
+
+    // For Universal Router, we need to adjust checks:
+    // - For token input: Add pre-transfer items to approvals (proxy will transfer from user → router)
+    // - For ETH input: No approvals needed (ETH comes with tx.value)
+    // - Only output token balance will change during proxy execution
+    // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
+    let approvalsToUse = tokenApprovals;
+    let withdrawalsToUse = checks.withdrawals;
+
+    if (isUniversalRouter) {
+      console.log('🔧 Adjusting checks for Universal Router');
+      console.log('Original approvals:', tokenApprovals);
+      console.log('Original withdrawals:', checks.withdrawals);
+      console.log('Has WRAP_ETH:', hasWrapEthCommand);
+
+      if (hasWrapEthCommand) {
+        // ETH input: No pre-transfer, ETH comes with tx.value
+        // No approval checks needed
+        approvalsToUse = [];
+
+        // No withdrawal checks - proxy doesn't hold the tokens
+        withdrawalsToUse = [];
+      } else {
+        // Token input: Add pre-transfer to approvals array
+        // The proxy will transfer tokens from user → router in the same transaction
+        // Change target to Universal Router address for pre-transfer
+        approvalsToUse = tokenApprovals.map((approval) => ({
+          ...approval,
+          target: uniswapRouter.address, // Proxy will transfer to router, not approve proxy
+        }));
+
+        // No withdrawal checks needed for any token - diffs check is sufficient
+        // Withdrawal checks try to send tokens which the proxy doesn't have
+        withdrawalsToUse = [];
+      }
+
+      console.log('Adjusted approvals:', approvalsToUse);
+      console.log('Adjusted withdrawals:', withdrawalsToUse);
+    }
+
+    const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
+      await Promise.all([
+        transformToMetadata(checks.postTransfer, publicClient),
+        transformToMetadata(checks.preTransfer, publicClient),
+
+        transformToMetadata(checks.diffs, publicClient),
+        transformToMetadata(approvalsToUse, publicClient),
+        transformToMetadata(withdrawalsToUse, publicClient),
+      ]);
+
+    // For Universal Router with token input: use transfer (true) so proxy transfers tokens to router
+    // For everything else: use approve (false) - default behavior
+    const approvalsWithFlags = approvals.map((approval) => ({
+      balance: approval.balance,
+      useTransfer: isUniversalRouter && !hasWrapEthCommand,
+    }));
+
+    const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
+      balance: preTransfer.balance,
+      useTransfer: false, // Default approve for pre/post mode
+    }));
+
+    // Check if we need ApproveRouter approval (when useTransfer is true)
+    const shouldUseApproveRouter = approvalsWithFlags.some(
+      (a) => a.useTransfer
+    );
+    const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
+    const targetContractAddress = targetContract.address as `0x${string}`;
+
     // Get ETH value from original transaction (not from checks, since we skip ETH approvals)
     const value = tx.value ? BigInt(tx.value) : undefined;
 
-    for (const token of tokenApprovals) {
+    for (const token of approvalsToUse) {
       // Additional safety check
       if (
         !token.token ||
@@ -1078,13 +1175,14 @@ export const TxOptions = () => {
         continue;
       }
 
+      // Determine approval target: for now just use proxy, we'll update this after hasWrapEthCommand is determined
       const [allowance, decimals, balance] = await publicClient.multicall({
         contracts: [
           {
             abi: erc20Abi,
             address: token.token as `0x${string}`,
             functionName: 'allowance',
-            args: [address, proxy.address],
+            args: [address, targetContractAddress],
           },
           {
             abi: erc20Abi,
@@ -1108,7 +1206,7 @@ export const TxOptions = () => {
       );
 
       if (allowance >= needed) {
-        // console.log('✅ Approval already sufficient, skipping');
+        console.log('✅ Approval already sufficient, skipping');
         continue;
       }
 
@@ -1120,7 +1218,7 @@ export const TxOptions = () => {
               abi: erc20Abi,
               functionName: 'approve',
               args: [
-                proxy.address,
+                targetContractAddress,
                 parseUnits(
                   token.balance.toString().replace(',', '.'),
                   decimals
@@ -1160,13 +1258,11 @@ export const TxOptions = () => {
         const canIncrease = balance >= needed;
         const amountToApprove = canIncrease ? needed + 1n : balance;
 
-        // console.log({canIncrease})
-
         const hash = await writeContractAsync({
           abi: erc20Abi,
           address: token.token as `0x${string}`,
           functionName: 'approve',
-          args: [proxy.address, amountToApprove],
+          args: [targetContractAddress, amountToApprove],
         });
 
         try {
@@ -1178,7 +1274,7 @@ export const TxOptions = () => {
             hash,
             status: receipt.status,
             tokenAddress: token.token,
-            spender: proxy.address,
+            spender: targetContractAddress,
             amount: amountToApprove.toString(),
           });
           resetCheckState();
@@ -1189,123 +1285,69 @@ export const TxOptions = () => {
       }
     }
 
-    // Detect if transaction has WRAP_ETH command (ETH input - comes with tx.value)
-    let hasWrapEthCommand = false;
-    if (isUniversalRouter) {
-      try {
-        const decoded = decodeFunctionData({
-          abi: uniswapRouter.abi,
-          data: tx.data as `0x${string}`,
-        });
-        if (decoded.functionName === 'execute' && decoded.args) {
-          const [commands] = decoded.args as [string, string[], bigint];
-          const commandBytes = commands.slice(2);
-          for (let i = 0; i < commandBytes.length; i += 2) {
-            if (parseInt(commandBytes.substr(i, 2), 16) === 0x0b) {
-              hasWrapEthCommand = true;
-              break;
-            }
-          }
-        }
-      } catch {
-        // Ignore decode errors
-      }
-    }
-
-    // For Universal Router, we need to adjust checks:
-    // - For token input: Add pre-transfer items to approvals (proxy will transfer from user → router)
-    // - For ETH input: No approvals needed (ETH comes with tx.value)
-    // - Only output token balance will change during proxy execution
-    // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
-    let approvalsToUse = tokenApprovals;
-    let withdrawalsToUse = checks.withdrawals;
-    
-    if (isUniversalRouter) {
-      console.log('🔧 Adjusting checks for Universal Router');
-      console.log('Original approvals:', tokenApprovals);
-      console.log('Original withdrawals:', checks.withdrawals);
-      console.log('Has WRAP_ETH:', hasWrapEthCommand);
-      
-      if (hasWrapEthCommand) {
-        // ETH input: No pre-transfer, ETH comes with tx.value
-        // No approval checks needed
-        approvalsToUse = [];
-
-        // No withdrawal checks - proxy doesn't hold the tokens
-        withdrawalsToUse = [];
-      } else {
-        // Token input: Add pre-transfer to approvals array
-        // The proxy will transfer tokens from user → router in the same transaction
-        // Change target to Universal Router address for pre-transfer
-        approvalsToUse = tokenApprovals.map((approval) => ({
-          ...approval,
-          target: uniswapRouter.address, // Proxy will transfer to router, not approve proxy
-        }));
-
-        // No withdrawal checks needed for any token - diffs check is sufficient
-        // Withdrawal checks try to send tokens which the proxy doesn't have
-        withdrawalsToUse = [];
-      }
-      
-      console.log('Adjusted approvals:', approvalsToUse);
-      console.log('Adjusted withdrawals:', withdrawalsToUse);
-    }
-
-    const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
-      await Promise.all([
-        transformToMetadata(checks.postTransfer, publicClient),
-        transformToMetadata(checks.preTransfer, publicClient),
-
-        transformToMetadata(checks.diffs, publicClient),
-        transformToMetadata(approvalsToUse, publicClient),
-        transformToMetadata(withdrawalsToUse, publicClient),
-      ]);
-
-    // For Universal Router with token input: use transfer (true) so proxy transfers tokens to router
-    // For everything else: use approve (false) - default behavior
-    const approvalsWithFlags = approvals.map((approval) => ({
-      balance: approval.balance,
-      useTransfer: isUniversalRouter && !hasWrapEthCommand,
-    }));
-    
-    const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
-      balance: preTransfer.balance,
-      useTransfer: false, // Default approve for pre/post mode
-    }));
-
     try {
       let hash: `0x${string}` = '0x';
 
       if (safe && safeInfo) {
         const mainTx = {
-          to: proxy.address,
+          to: targetContract.address,
           data: (() => {
             switch (mode) {
               case EMode.diifs: {
-                return encodeFunctionData({
-                  abi: proxy.abi,
-                  functionName: 'proxyCallDiffs',
-                  args: [
-                    diffs.map(d => d.balance),
-                    approvalsWithFlags,
-                    tx.to,
-                    data,
-                    withdrawals.map(w => w.balance),
-                  ],
-                });
+                if (shouldUseApproveRouter) {
+                  return encodeFunctionData({
+                    abi: targetContract.abi,
+                    functionName: 'approveProxyCallDiffs',
+                    args: [
+                      proxy.address,
+                      diffs.map((d) => d.balance),
+                      approvalsWithFlags,
+                      tx.to,
+                      data,
+                      withdrawals.map((w) => w.balance),
+                    ],
+                  });
+                } else {
+                  return encodeFunctionData({
+                    abi: targetContract.abi,
+                    functionName: 'proxyCallDiffs',
+                    args: [
+                      diffs.map((d) => d.balance),
+                      approvalsWithFlags,
+                      tx.to,
+                      data,
+                      withdrawals.map((w) => w.balance),
+                    ],
+                  });
+                }
               }
               case EMode['pre/post']: {
-                return encodeFunctionData({
-                  abi: proxy.abi,
-                  functionName: 'proxyCall',
-                  args: [
-                    postTransfers.map(p => p.balance),
-                    preTransfersWithFlags,
-                    tx.to,
-                    data,
-                    withdrawals.map(w => w.balance),
-                  ],
-                });
+                if (shouldUseApproveRouter) {
+                  return encodeFunctionData({
+                    abi: targetContract.abi,
+                    functionName: 'approveProxyCall',
+                    args: [
+                      proxy.address,
+                      postTransfers.map((p) => p.balance),
+                      preTransfersWithFlags,
+                      tx.to,
+                      data,
+                      withdrawals.map((w) => w.balance),
+                    ],
+                  });
+                } else {
+                  return encodeFunctionData({
+                    abi: targetContract.abi,
+                    functionName: 'proxyCall',
+                    args: [
+                      postTransfers.map((p) => p.balance),
+                      preTransfersWithFlags,
+                      tx.to,
+                      data,
+                      withdrawals.map((w) => w.balance),
+                    ],
+                  });
+                }
               }
               default:
                 return '0x';
@@ -1335,40 +1377,81 @@ export const TxOptions = () => {
           },
         });
       } else {
+        // Determine if we need to use ApproveRouter (when useTransfer is true)
+        const shouldUseApproveRouter = approvalsWithFlags.some(
+          (a) => a.useTransfer
+        );
+        const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
+
         switch (mode) {
           case EMode.diifs: {
-            hash = await writeContractAsync({
-              abi: proxy.abi,
-              address: proxy.address,
-              functionName: 'proxyCallDiffs',
-              args: [
-                diffs.map(d => d.balance),
-                approvalsWithFlags,
-                tx.to,
-                data,
-                withdrawals.map(w => w.balance),
-              ],
-              value: value,
-              maxFeePerGas: 200_000n,
-            });
+            if (shouldUseApproveRouter) {
+              hash = await writeContractAsync({
+                abi: targetContract.abi,
+                address: targetContract.address as `0x${string}`,
+                functionName: 'approveProxyCallDiffs',
+                args: [
+                  proxy.address,
+                  diffs.map((d) => d.balance),
+                  approvalsWithFlags,
+                  tx.to,
+                  data,
+                  withdrawals.map((w) => w.balance),
+                ],
+                value: value,
+                maxFeePerGas: 200_000n,
+              });
+            } else {
+              hash = await writeContractAsync({
+                abi: targetContract.abi,
+                address: targetContract.address as `0x${string}`,
+                functionName: 'proxyCallDiffs',
+                args: [
+                  diffs.map((d) => d.balance),
+                  approvalsWithFlags,
+                  tx.to,
+                  data,
+                  withdrawals.map((w) => w.balance),
+                ],
+                value: value,
+                maxFeePerGas: 200_000n,
+              });
+            }
 
             break;
           }
 
           case EMode['pre/post']: {
-            hash = await writeContractAsync({
-              abi: proxy.abi,
-              address: proxy.address,
-              functionName: 'proxyCall',
-              args: [
-                postTransfers.map(p => p.balance),
-                preTransfersWithFlags,
-                tx.to,
-                data,
-                withdrawals.map(w => w.balance),
-              ],
-              value: value,
-            });
+            if (shouldUseApproveRouter) {
+              hash = await writeContractAsync({
+                abi: targetContract.abi,
+                address: targetContract.address as `0x${string}`,
+                functionName: 'approveProxyCall',
+                args: [
+                  proxy.address,
+                  postTransfers.map((p) => p.balance),
+                  preTransfersWithFlags,
+                  tx.to,
+                  data,
+                  withdrawals.map((w) => w.balance),
+                ],
+                value: value,
+              });
+            } else {
+              hash = await writeContractAsync({
+                abi: targetContract.abi,
+                address: targetContract.address as `0x${string}`,
+                functionName: 'proxyCall',
+                args: [
+                  postTransfers.map((p) => p.balance),
+                  preTransfersWithFlags,
+                  tx.to,
+                  data,
+                  withdrawals.map((w) => w.balance),
+                ],
+                value: value,
+              });
+            }
 
             break;
           }
