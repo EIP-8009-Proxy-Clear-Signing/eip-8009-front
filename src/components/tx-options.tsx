@@ -1219,13 +1219,13 @@ export const TxOptions = () => {
     // - No withdrawals needed (diffs check is sufficient, proxy doesn't hold tokens)
     let approvalsToUse = tokenApprovals;
     let withdrawalsToUse = checks.withdrawals;
-
+    
     if (isUniversalRouter) {
       console.log('🔧 Adjusting checks for Universal Router');
       console.log('Original approvals:', tokenApprovals);
       console.log('Original withdrawals:', checks.withdrawals);
       console.log('Has WRAP_ETH:', hasWrapEthCommand);
-
+      
       if (hasWrapEthCommand) {
         // ETH input: No pre-transfer, ETH comes with tx.value
         // No approval checks needed
@@ -1246,7 +1246,7 @@ export const TxOptions = () => {
         // Withdrawal checks try to send tokens which the proxy doesn't have
         withdrawalsToUse = [];
       }
-
+      
       console.log('Adjusted approvals:', approvalsToUse);
       console.log('Adjusted withdrawals:', withdrawalsToUse);
     }
