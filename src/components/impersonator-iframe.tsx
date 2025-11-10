@@ -59,6 +59,14 @@ export function ImpersonatorIframe() {
     }
   };
 
+  const originIsUniswap = (origin: string) => {
+    const uniswapOrigins = [
+      'https://app.uniswap.org',
+      'https://uniswap-eip.ilya-kubariev.workers.dev',
+    ];
+    return uniswapOrigins.includes(origin);
+  };
+
   useEffect(() => {
     if (!iframeRef.current?.contentWindow) return;
     if (!address) return;
@@ -188,7 +196,19 @@ export function ImpersonatorIframe() {
               }
             }
 
-            sendMessageToIFrame({ eventID, data: data[0] });
+            if (originIsUniswap(event.origin)) {
+              sendMessageToIFrame({
+                eventID,
+                data: { safeTxHash: data[0] },
+              });
+
+              return;
+            }
+
+            sendMessageToIFrame({
+              eventID,
+              data: data[0],
+            });
             return;
           } catch (error) {
             console.log('event > sendTransactions > error', error);
