@@ -11,6 +11,9 @@
 		},
 		{
 			"path": "../permit2"
+		},
+		{
+			"path": "../uniswap-eip"
 		}
 	],
 	"settings": {}

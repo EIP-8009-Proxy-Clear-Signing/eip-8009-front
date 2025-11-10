@@ -1,111 +1,11 @@
-export const proxyAbi = [
+export const proxyApproveRouterAbi = [
   {
     inputs: [
       {
-        internalType: 'address',
-        name: 'target',
+        internalType: 'contract IBalanceProxy',
+        name: 'balanceProxy',
         type: 'address',
       },
-      {
-        internalType: 'bytes',
-        name: 'data',
-        type: 'bytes',
-      },
-      {
-        internalType: 'bytes',
-        name: 'returnData',
-        type: 'bytes',
-      },
-    ],
-    name: 'CallFailed',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'address',
-        name: 'token',
-        type: 'address',
-      },
-      {
-        internalType: 'address',
-        name: 'target',
-        type: 'address',
-      },
-      {
-        internalType: 'int256',
-        name: 'balance',
-        type: 'int256',
-      },
-      {
-        internalType: 'uint256',
-        name: 'actual',
-        type: 'uint256',
-      },
-    ],
-    name: 'InsufficientBalance',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'address',
-        name: 'token',
-        type: 'address',
-      },
-      {
-        internalType: 'address',
-        name: 'target',
-        type: 'address',
-      },
-    ],
-    name: 'MaliciousApproveTarget',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'int256',
-        name: 'amount',
-        type: 'int256',
-      },
-    ],
-    name: 'NegativeApprovalAmount',
-    type: 'error',
-  },
-  {
-    inputs: [],
-    name: 'ReentrancyGuardReentrantCall',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'address',
-        name: 'token',
-        type: 'address',
-      },
-      {
-        internalType: 'address',
-        name: 'target',
-        type: 'address',
-      },
-      {
-        internalType: 'int256',
-        name: 'expected',
-        type: 'int256',
-      },
-      {
-        internalType: 'int256',
-        name: 'actual',
-        type: 'int256',
-      },
-    ],
-    name: 'UnexpectedBalanceDiff',
-    type: 'error',
-  },
-  {
-    inputs: [
       {
         components: [
           {
@@ -195,7 +95,7 @@ export const proxyAbi = [
         type: 'tuple[]',
       },
     ],
-    name: 'proxyCall',
+    name: 'approveProxyCall',
     outputs: [
       {
         internalType: 'bytes',
@@ -208,6 +108,11 @@ export const proxyAbi = [
   },
   {
     inputs: [
+      {
+        internalType: 'contract IBalanceProxy',
+        name: 'balanceProxy',
+        type: 'address',
+      },
       {
         components: [
           {
@@ -297,7 +202,7 @@ export const proxyAbi = [
         type: 'tuple[]',
       },
     ],
-    name: 'proxyCallDiffs',
+    name: 'approveProxyCallDiffs',
     outputs: [
       {
         internalType: 'bytes',
@@ -307,9 +212,5 @@ export const proxyAbi = [
     ],
     stateMutability: 'payable',
     type: 'function',
-  },
-  {
-    stateMutability: 'payable',
-    type: 'receive',
   },
 ] as const;
