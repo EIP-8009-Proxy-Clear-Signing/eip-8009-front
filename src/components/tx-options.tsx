@@ -1399,7 +1399,6 @@ export const TxOptions = () => {
                   withdrawals.map((w) => w.balance),
                 ],
                 value: value,
-                maxFeePerGas: 200_000n,
               });
             } else {
               hash = await writeContractAsync({
@@ -1414,7 +1413,6 @@ export const TxOptions = () => {
                   withdrawals.map((w) => w.balance),
                 ],
                 value: value,
-                maxFeePerGas: 200_000n,
               });
             }
 
