@@ -703,6 +703,9 @@ export const TxOptions = () => {
         );
 
         if (allowance >= needed) {
+          console.log(
+            `✅ Sufficient allowance for ${token.symbol} (${token.token}), needed: ${needed}, allowance: ${allowance}`,
+          )
           continue;
         }
 
