@@ -1,0 +1,286 @@
+export const proxyPermitRouterAbi = [
+  {
+    inputs: [
+      {
+        internalType: 'uint256',
+        name: 'permitsLength',
+        type: 'uint256',
+      },
+      {
+        internalType: 'uint256',
+        name: 'approvalsLength',
+        type: 'uint256',
+      },
+    ],
+    name: 'PermitsLengthMismatch',
+    type: 'error',
+  },
+  {
+    inputs: [
+      {
+        internalType: 'contract IBalanceProxy',
+        name: 'balanceProxy',
+        type: 'address',
+      },
+      {
+        components: [
+          {
+            internalType: 'address',
+            name: 'target',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'token',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'balance',
+            type: 'int256',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Balance[]',
+        name: 'postBalances',
+        type: 'tuple[]',
+      },
+      {
+        components: [
+          {
+            components: [
+              {
+                internalType: 'address',
+                name: 'target',
+                type: 'address',
+              },
+              {
+                internalType: 'address',
+                name: 'token',
+                type: 'address',
+              },
+              {
+                internalType: 'int256',
+                name: 'balance',
+                type: 'int256',
+              },
+            ],
+            internalType: 'struct IBalanceProxy.Balance',
+            name: 'balance',
+            type: 'tuple',
+          },
+          {
+            internalType: 'bool',
+            name: 'useTransfer',
+            type: 'bool',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Approval[]',
+        name: 'approvals',
+        type: 'tuple[]',
+      },
+      {
+        components: [
+          {
+            internalType: 'uint256',
+            name: 'deadline',
+            type: 'uint256',
+          },
+          {
+            internalType: 'uint8',
+            name: 'v',
+            type: 'uint8',
+          },
+          {
+            internalType: 'bytes32',
+            name: 'r',
+            type: 'bytes32',
+          },
+          {
+            internalType: 'bytes32',
+            name: 's',
+            type: 'bytes32',
+          },
+        ],
+        internalType: 'struct PermitData[]',
+        name: 'permits',
+        type: 'tuple[]',
+      },
+      {
+        internalType: 'address',
+        name: 'target',
+        type: 'address',
+      },
+      {
+        internalType: 'bytes',
+        name: 'data',
+        type: 'bytes',
+      },
+      {
+        components: [
+          {
+            internalType: 'address',
+            name: 'target',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'token',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'balance',
+            type: 'int256',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Balance[]',
+        name: 'withdrawals',
+        type: 'tuple[]',
+      },
+    ],
+    name: 'permitProxyCall',
+    outputs: [
+      {
+        internalType: 'bytes',
+        name: '',
+        type: 'bytes',
+      },
+    ],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+  {
+    inputs: [
+      {
+        internalType: 'contract IBalanceProxy',
+        name: 'balanceProxy',
+        type: 'address',
+      },
+      {
+        components: [
+          {
+            internalType: 'address',
+            name: 'target',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'token',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'balance',
+            type: 'int256',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Balance[]',
+        name: 'diffs',
+        type: 'tuple[]',
+      },
+      {
+        components: [
+          {
+            components: [
+              {
+                internalType: 'address',
+                name: 'target',
+                type: 'address',
+              },
+              {
+                internalType: 'address',
+                name: 'token',
+                type: 'address',
+              },
+              {
+                internalType: 'int256',
+                name: 'balance',
+                type: 'int256',
+              },
+            ],
+            internalType: 'struct IBalanceProxy.Balance',
+            name: 'balance',
+            type: 'tuple',
+          },
+          {
+            internalType: 'bool',
+            name: 'useTransfer',
+            type: 'bool',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Approval[]',
+        name: 'approvals',
+        type: 'tuple[]',
+      },
+      {
+        components: [
+          {
+            internalType: 'uint256',
+            name: 'deadline',
+            type: 'uint256',
+          },
+          {
+            internalType: 'uint8',
+            name: 'v',
+            type: 'uint8',
+          },
+          {
+            internalType: 'bytes32',
+            name: 'r',
+            type: 'bytes32',
+          },
+          {
+            internalType: 'bytes32',
+            name: 's',
+            type: 'bytes32',
+          },
+        ],
+        internalType: 'struct PermitData[]',
+        name: 'permits',
+        type: 'tuple[]',
+      },
+      {
+        internalType: 'address',
+        name: 'target',
+        type: 'address',
+      },
+      {
+        internalType: 'bytes',
+        name: 'data',
+        type: 'bytes',
+      },
+      {
+        components: [
+          {
+            internalType: 'address',
+            name: 'target',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'token',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'balance',
+            type: 'int256',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Balance[]',
+        name: 'withdrawals',
+        type: 'tuple[]',
+      },
+    ],
+    name: 'permitProxyCallDiffs',
+    outputs: [
+      {
+        internalType: 'bytes',
+        name: '',
+        type: 'bytes',
+      },
+    ],
+    stateMutability: 'payable',
+    type: 'function',
+  },
+] as const;
