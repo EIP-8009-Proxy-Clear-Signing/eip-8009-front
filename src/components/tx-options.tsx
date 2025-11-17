@@ -259,13 +259,11 @@ export const TxOptions = () => {
 
   const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
   
-  // Load permit preference from localStorage, default to true
   const [usePermitRouter, setUsePermitRouter] = useState<boolean>(() => {
     const saved = localStorage.getItem('usePermitRouter');
     return saved !== null ? saved === 'true' : true;
   });
 
-  // Save permit preference to localStorage when it changes
   useEffect(() => {
     localStorage.setItem('usePermitRouter', String(usePermitRouter));
   }, [usePermitRouter]);
@@ -528,7 +526,6 @@ export const TxOptions = () => {
     setDataToForm();
   }, [setDataToForm]);
 
-  // Abort transaction when modal closes
   useEffect(() => {
     if (!modalOpen && abortControllerRef.current) {
       console.log('⚠️ Modal closed - aborting transaction');
@@ -688,7 +685,7 @@ export const TxOptions = () => {
 
       // Determine router to use based on transaction requirements:
       // Priority order:
-      // 1. permitRouter - if all tokens support EIP-2612 permit (best, gasless)
+      // 1. permitRouter - if all tokens support EIP-2612 permit (best, gasless) and flag is true
       // 2. approveRouter - if tokens need transfers (Universal Router non-WRAP_ETH)
       // 3. proxy - basic approval-only flow (fallback)
       const allTokensSupportPermit =
@@ -901,6 +898,11 @@ export const TxOptions = () => {
       checkAborted();
 
       let hash: `0x${string}` = '0x';
+
+      console.log('MODE USAGE:', mode, {
+        shouldUseApproveRouter,
+        shouldUsePermitRouter,
+      });
 
       if (safe && safeInfo) {
         const mainTx = {

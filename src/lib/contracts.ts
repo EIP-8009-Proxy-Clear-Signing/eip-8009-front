@@ -1,8 +1,8 @@
 import { sepolia } from 'viem/chains';
-import { proxyAbi } from './proxy.abi';
-import { universalRouterAbi } from './universal-router.abi';
-import { proxyApproveRouterAbi } from './proxy-approve-router';
-import { proxyPermitRouterAbi } from './proxy-permit-router';
+import { proxyAbi } from './abis/proxy.abi';
+import { universalRouterAbi } from './abis/universal-router.abi';
+import { proxyApproveRouterAbi } from './abis/proxy-approve-router.abi';
+import { proxyPermitRouterAbi } from './abis/proxy-permit-router.abi';
 
 export const contracts = {
   [sepolia.id]: {
