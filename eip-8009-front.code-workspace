@@ -13,7 +13,7 @@
 			"path": "../permit2"
 		},
 		{
-			"path": "../uniswap-eip"
+			"path": "../interface"
 		}
 	],
 	"settings": {}

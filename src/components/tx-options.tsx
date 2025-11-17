@@ -29,13 +29,10 @@ import {
   useAccount,
   useChainId,
   usePublicClient,
+  useWalletClient,
   useWriteContract,
 } from 'wagmi';
-import {
-  getProxyContract,
-  getProxyApproveRouterContract,
-  getUniswapRouterContract,
-} from '@/lib/contracts';
+import { getContract } from '@/lib/contracts';
 import {
   Abi,
   decodeFunctionData,
@@ -66,6 +63,11 @@ import {
   logUniversalRouterCommands,
   modifyUniversalRouterCalldata,
 } from '@/lib/uniswap-router';
+import {
+  supportsPermit,
+  PermitData,
+  generatePermitSignature,
+} from '@/lib/permit-utils';
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -227,6 +229,7 @@ export const TxOptions = () => {
   const { address } = useAccount();
   const chainId = useChainId();
   const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
   const { writeContractAsync } = useWriteContract();
   const { safeInfo, safe } = useSafeApp();
 
@@ -543,9 +546,9 @@ export const TxOptions = () => {
     };
 
     try {
-      const proxy = getProxyContract(chainId);
-      const approveRouter = getProxyApproveRouterContract(chainId);
-      const uniswapRouter = getUniswapRouterContract(chainId);
+      const proxy = getContract('proxy', chainId);
+      const approveRouter = getContract('proxyApproveRouter', chainId);
+      const uniswapRouter = getContract('uniswapRouter', chainId);
 
       const isUniversalRouter = isUniversalRouterTransaction(
         tx.to,
@@ -654,14 +657,72 @@ export const TxOptions = () => {
         useTransfer: false,
       }));
 
-      const shouldUseApproveRouter = approvalsWithFlags.some(
-        (a) => a.useTransfer
+      // Check which tokens support permit (EIP-2612)
+      const permitSupport = await Promise.all(
+        approvalsWithFlags.map(async (approval) => {
+          const tokenAddress = approval.balance.token;
+          if (
+            tokenAddress === zeroAddress ||
+            tokenAddress === ethAddress ||
+            !tokenAddress
+          ) {
+            return false;
+          }
+          return await supportsPermit(tokenAddress, publicClient);
+        })
       );
-      const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
+
+      checkAborted();
+
+      // Determine router to use based on transaction requirements:
+      // Priority order:
+      // 1. permitRouter - if all tokens support EIP-2612 permit (best, gasless)
+      // 2. approveRouter - if tokens need transfers (Universal Router non-WRAP_ETH)
+      // 3. proxy - basic approval-only flow (fallback)
+      const allTokensSupportPermit =
+        approvalsWithFlags.length > 0 &&
+        permitSupport.every((supports, idx) => {
+          // Skip check for ETH or zero address
+          const tokenAddress = approvalsWithFlags[idx].balance.token;
+          if (
+            tokenAddress === zeroAddress ||
+            tokenAddress === ethAddress ||
+            !tokenAddress
+          ) {
+            return true;
+          }
+          return supports;
+        });
+
+      const shouldUsePermitRouter = allTokensSupportPermit && !safe;
+
+      const shouldUseApproveRouter =
+        !shouldUsePermitRouter && approvalsWithFlags.some((a) => a.useTransfer);
+
+      const permitRouter = getContract('proxyPermitRouter', chainId);
+      const targetContract = shouldUseApproveRouter
+        ? approveRouter
+        : shouldUsePermitRouter
+          ? permitRouter
+          : proxy;
+
+      console.log('🔍 Router selection:', {
+        shouldUseApproveRouter,
+        shouldUsePermitRouter,
+        allTokensSupportPermit,
+        targetContract: targetContract.address,
+        permitSupport,
+      });
+
       const targetContractAddress = targetContract.address as `0x${string}`;
       const value = tx.value ? BigInt(tx.value) : undefined;
 
-      for (const token of approvalsToUse) {
+      // Store permit signatures for later use
+      const permitSignatures: PermitData[] = [];
+
+      for (let tokenIdx = 0; tokenIdx < approvalsToUse.length; tokenIdx++) {
+        const token = approvalsToUse[tokenIdx];
+
         if (
           !token.token ||
           token.token === '' ||
@@ -669,6 +730,66 @@ export const TxOptions = () => {
           token.token === ethAddress
         ) {
           continue;
+        }
+
+        // If this token will use permit, skip approval but collect permit signature
+        const willUsePermit = shouldUsePermitRouter && permitSupport[tokenIdx];
+
+        if (willUsePermit) {
+          console.log(
+            `📝 Token ${token.token} supports permit - will use permitRouter`
+          );
+
+          if (!walletClient) {
+            throw new Error('Wallet client not available for permit signing');
+          }
+
+          try {
+            // Get token decimals to calculate the amount
+            const decimals = await publicClient.readContract({
+              abi: erc20Abi,
+              address: token.token as `0x${string}`,
+              functionName: 'decimals',
+            });
+
+            checkAborted();
+
+            const amount = parseUnits(
+              token.balance.toString().replace(',', '.'),
+              decimals
+            );
+
+            // Calculate deadline (1 hour from now)
+            const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+            toast.info(
+              `Requesting permit signature for ${token.symbol || token.token}...`,
+              { duration: 3000 }
+            );
+
+            // Generate permit signature
+            const permitData = await generatePermitSignature(
+              token.token as `0x${string}`,
+              address,
+              targetContractAddress,
+              amount,
+              deadline,
+              publicClient,
+              walletClient
+            );
+
+            checkAborted();
+
+            console.log(`✅ Permit signature collected for ${token.symbol}`);
+            permitSignatures.push(permitData);
+            continue;
+          } catch (error) {
+            console.error('❌ Failed to collect permit signature:', error);
+            const errorMessage =
+              error instanceof Error ? error.message : 'Unknown error';
+            toast.error(`Failed to get permit signature: ${errorMessage}`);
+            throw error;
+          }
         }
 
         const [allowance, decimals, balance] = await publicClient.multicall({
@@ -704,8 +825,8 @@ export const TxOptions = () => {
 
         if (allowance >= needed) {
           console.log(
-            `✅ Sufficient allowance for ${token.symbol} (${token.token}), needed: ${needed}, allowance: ${allowance}`,
-          )
+            `✅ Sufficient allowance for ${token.symbol} (${token.token}), needed: ${needed}, allowance: ${allowance}`
+          );
           continue;
         }
 
@@ -787,6 +908,20 @@ export const TxOptions = () => {
                       withdrawals.map((w) => w.balance),
                     ],
                   });
+                } else if (shouldUsePermitRouter) {
+                  return encodeFunctionData({
+                    abi: targetContract.abi,
+                    functionName: 'permitProxyCallDiffs',
+                    args: [
+                      proxy.address,
+                      diffs.map((d) => d.balance),
+                      approvalsWithFlags,
+                      permitSignatures,
+                      tx.to,
+                      data,
+                      withdrawals.map((w) => w.balance),
+                    ],
+                  });
                 } else {
                   return encodeFunctionData({
                     abi: targetContract.abi,
@@ -810,6 +945,20 @@ export const TxOptions = () => {
                       proxy.address,
                       postTransfers.map((p) => p.balance),
                       preTransfersWithFlags,
+                      tx.to,
+                      data,
+                      withdrawals.map((w) => w.balance),
+                    ],
+                  });
+                } else if (shouldUsePermitRouter) {
+                  return encodeFunctionData({
+                    abi: targetContract.abi,
+                    functionName: 'permitProxyCall',
+                    args: [
+                      proxy.address,
+                      postTransfers.map((p) => p.balance),
+                      preTransfersWithFlags,
+                      permitSignatures,
                       tx.to,
                       data,
                       withdrawals.map((w) => w.balance),
@@ -860,12 +1009,6 @@ export const TxOptions = () => {
           },
         });
       } else {
-        // Determine if we need to use ApproveRouter (when useTransfer is true)
-        const shouldUseApproveRouter = approvalsWithFlags.some(
-          (a) => a.useTransfer
-        );
-        const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
-
         switch (mode) {
           case EMode.diifs: {
             if (shouldUseApproveRouter) {
@@ -877,6 +1020,22 @@ export const TxOptions = () => {
                   proxy.address,
                   diffs.map((d) => d.balance),
                   approvalsWithFlags,
+                  tx.to,
+                  data,
+                  withdrawals.map((w) => w.balance),
+                ],
+                value: value,
+              });
+            } else if (shouldUsePermitRouter) {
+              hash = await writeContractAsync({
+                abi: targetContract.abi,
+                address: targetContract.address as `0x${string}`,
+                functionName: 'permitProxyCallDiffs',
+                args: [
+                  proxy.address,
+                  diffs.map((d) => d.balance),
+                  approvalsWithFlags,
+                  permitSignatures as readonly PermitData[] & never[],
                   tx.to,
                   data,
                   withdrawals.map((w) => w.balance),
@@ -912,6 +1071,22 @@ export const TxOptions = () => {
                   proxy.address,
                   postTransfers.map((p) => p.balance),
                   preTransfersWithFlags,
+                  tx.to,
+                  data,
+                  withdrawals.map((w) => w.balance),
+                ],
+                value: value,
+              });
+            } else if (shouldUsePermitRouter) {
+              hash = await writeContractAsync({
+                abi: targetContract.abi,
+                address: targetContract.address as `0x${string}`,
+                functionName: 'permitProxyCall',
+                args: [
+                  proxy.address,
+                  postTransfers.map((p) => p.balance),
+                  preTransfersWithFlags,
+                  permitSignatures as readonly PermitData[] & never[],
                   tx.to,
                   data,
                   withdrawals.map((w) => w.balance),
