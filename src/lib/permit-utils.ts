@@ -183,7 +183,7 @@ export async function generatePermitSignature(
     v += 27;
   }
 
-  console.log('✅ Permit signature generated:', { v, r, s, signature });
+  // console.log('✅ Permit signature generated:', { v, r, s, signature });
 
   return {
     deadline,
