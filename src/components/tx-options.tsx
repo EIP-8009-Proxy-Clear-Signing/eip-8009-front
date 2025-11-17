@@ -11,6 +11,7 @@ import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Input } from './ui/input';
+import { Checkbox } from './ui/checkbox';
 import { Loader2, X } from 'lucide-react';
 import {
   Check,
@@ -257,6 +258,17 @@ export const TxOptions = () => {
   } = useChecks();
 
   const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
+  
+  // Load permit preference from localStorage, default to true
+  const [usePermitRouter, setUsePermitRouter] = useState<boolean>(() => {
+    const saved = localStorage.getItem('usePermitRouter');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  // Save permit preference to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('usePermitRouter', String(usePermitRouter));
+  }, [usePermitRouter]);
 
   const resetCheckState = useCallback(() => {
     for (let i = checks.approvals.length - 1; i >= 0; i--) {
@@ -694,7 +706,7 @@ export const TxOptions = () => {
           return supports;
         });
 
-      const shouldUsePermitRouter = allTokensSupportPermit && !safe;
+      const shouldUsePermitRouter = usePermitRouter && allTokensSupportPermit && !safe;
 
       const shouldUseApproveRouter =
         !shouldUsePermitRouter && approvalsWithFlags.some((a) => a.useTransfer);
@@ -707,6 +719,7 @@ export const TxOptions = () => {
           : proxy;
 
       console.log('🔍 Router selection:', {
+        usePermitRouter,
         shouldUseApproveRouter,
         shouldUsePermitRouter,
         allTokensSupportPermit,
@@ -1235,6 +1248,21 @@ export const TxOptions = () => {
               onBlur={handleBlur}
               placeholder="Slippage"
             />
+            <div className="flex items-center space-x-2 pt-2">
+              <Checkbox
+                id="use-permit-router"
+                checked={usePermitRouter}
+                onCheckedChange={(checked: boolean) => 
+                  setUsePermitRouter(checked === true)
+                }
+              />
+              <Label
+                htmlFor="use-permit-router"
+                className="text-sm font-normal cursor-pointer"
+              >
+                Use Permit Router (gasless approvals via EIP-2612 signatures)
+              </Label>
+            </div>
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>
@@ -1344,6 +1372,21 @@ export const TxOptions = () => {
                     + {check.balance.toFixed(6)} {check.symbol}
                   </p>
                 ))}
+            </div>
+            <div className="flex items-center space-x-2 pt-2">
+              <Checkbox
+                id="use-permit-router-simple"
+                checked={usePermitRouter}
+                onCheckedChange={(checked: boolean) => 
+                  setUsePermitRouter(checked === true)
+                }
+              />
+              <Label
+                htmlFor="use-permit-router-simple"
+                className="text-sm font-normal cursor-pointer"
+              >
+                Use Permit Router (gasless approvals)
+              </Label>
             </div>
           </div>
         )}
