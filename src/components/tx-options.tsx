@@ -913,10 +913,10 @@ export const TxOptions = () => {
                 if (shouldUseApproveRouter) {
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'approveProxyCallDiffs',
+                    functionName: 'approveProxyCallDiffsWithMeta',
                     args: [
                       proxy.address,
-                      diffs.map((d) => d.balance),
+                      diffs,
                       approvalsWithFlags,
                       tx.to,
                       data,
@@ -926,10 +926,10 @@ export const TxOptions = () => {
                 } else if (shouldUsePermitRouter) {
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'permitProxyCallDiffs',
+                    functionName: 'permitProxyCallDiffsWithMeta',
                     args: [
                       proxy.address,
-                      diffs.map((d) => d.balance),
+                      diffs,
                       approvalsWithFlags,
                       permitSignatures,
                       tx.to,
@@ -940,9 +940,9 @@ export const TxOptions = () => {
                 } else {
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'proxyCallDiffs',
+                    functionName: 'proxyCallDiffsMeta',
                     args: [
-                      diffs.map((d) => d.balance),
+                      diffs,
                       approvalsWithFlags,
                       tx.to,
                       data,
@@ -955,10 +955,10 @@ export const TxOptions = () => {
                 if (shouldUseApproveRouter) {
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'approveProxyCall',
+                    functionName: 'approveProxyCallWithMeta',
                     args: [
                       proxy.address,
-                      postTransfers.map((p) => p.balance),
+                      postTransfers,
                       preTransfersWithFlags,
                       tx.to,
                       data,
@@ -968,10 +968,10 @@ export const TxOptions = () => {
                 } else if (shouldUsePermitRouter) {
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'permitProxyCall',
+                    functionName: 'permitProxyCallWithMeta',
                     args: [
                       proxy.address,
-                      postTransfers.map((p) => p.balance),
+                      postTransfers,
                       preTransfersWithFlags,
                       permitSignatures,
                       tx.to,
@@ -982,9 +982,9 @@ export const TxOptions = () => {
                 } else {
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'proxyCall',
+                    functionName: 'proxyCallMeta',
                     args: [
-                      postTransfers.map((p) => p.balance),
+                      postTransfers,
                       preTransfersWithFlags,
                       tx.to,
                       data,
@@ -1030,10 +1030,10 @@ export const TxOptions = () => {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'approveProxyCallDiffs',
+                functionName: 'approveProxyCallDiffsWithMeta',
                 args: [
                   proxy.address,
-                  diffs.map((d) => d.balance),
+                  diffs,
                   approvalsWithFlags,
                   tx.to,
                   data,
@@ -1045,10 +1045,10 @@ export const TxOptions = () => {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'permitProxyCallDiffs',
+                functionName: 'permitProxyCallDiffsWithMeta',
                 args: [
                   proxy.address,
-                  diffs.map((d) => d.balance),
+                  diffs,
                   approvalsWithFlags,
                   permitSignatures as readonly PermitData[] & never[],
                   tx.to,
@@ -1061,9 +1061,9 @@ export const TxOptions = () => {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'proxyCallDiffs',
+                functionName: 'proxyCallDiffsMeta',
                 args: [
-                  diffs.map((d) => d.balance),
+                  diffs,
                   approvalsWithFlags,
                   tx.to,
                   data,
@@ -1081,10 +1081,10 @@ export const TxOptions = () => {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'approveProxyCall',
+                functionName: 'approveProxyCallWithMeta',
                 args: [
                   proxy.address,
-                  postTransfers.map((p) => p.balance),
+                  postTransfers,
                   preTransfersWithFlags,
                   tx.to,
                   data,
@@ -1096,10 +1096,10 @@ export const TxOptions = () => {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'permitProxyCall',
+                functionName: 'permitProxyCallWithMeta',
                 args: [
                   proxy.address,
-                  postTransfers.map((p) => p.balance),
+                  postTransfers,
                   preTransfersWithFlags,
                   permitSignatures as readonly PermitData[] & never[],
                   tx.to,
@@ -1112,9 +1112,9 @@ export const TxOptions = () => {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'proxyCall',
+                functionName: 'proxyCallMeta',
                 args: [
-                  postTransfers.map((p) => p.balance),
+                  postTransfers,
                   preTransfersWithFlags,
                   tx.to,
                   data,
