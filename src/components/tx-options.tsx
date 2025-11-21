@@ -371,9 +371,8 @@ export const TxOptions = () => {
           createDiffsCheck();
         }
 
-        // Only create second diff check if input is not ETH
-        // (ETH is handled via transaction value)
-        if (checks.diffs.length < 2 && !isFromEth) {
+        // Create second diff check for input token (including ETH)
+        if (checks.diffs.length < 2) {
           createDiffsCheck();
         }
         break;
@@ -468,23 +467,17 @@ export const TxOptions = () => {
             (1 - slippage / 100),
         });
 
-        // Only add input diff if it's not ETH with negative value
-        // ETH being sent should be handled via transaction value, not diffs
-        const isEthInput =
-          from?.token.address === zeroAddress ||
-          from?.token.address === ethAddress;
+        // Always add input diff (including ETH)
         const inputBalance = -(
           formatBalance(from?.value.diff, from?.token.decimals) *
           (1 + slippage / 100)
         );
 
-        if (!isEthInput || inputBalance >= 0) {
-          changeDiffsCheck(1, {
-            target: String(address),
-            token: formatToken(from?.token.symbol, from?.token.address),
-            balance: inputBalance,
-          });
-        }
+        changeDiffsCheck(1, {
+          target: String(address),
+          token: formatToken(from?.token.symbol, from?.token.address),
+          balance: inputBalance,
+        });
 
         break;
       }
@@ -1042,6 +1035,8 @@ export const TxOptions = () => {
                 value: value,
               });
             } else if (shouldUsePermitRouter) {
+              console.log({diffs})
+
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
