@@ -1,9 +1,10 @@
-import { Address, Hex } from "viem";
-import { create } from "zustand";
+import { Address, Hex } from 'viem';
+import { create } from 'zustand';
 
 export type UseModalPromise = {
   isAdvanced: boolean;
   modalOpen: boolean;
+  usePermitRouter: boolean;
   tx: {
     to: Address;
     data: Hex;
@@ -19,11 +20,16 @@ export type UseModalPromise = {
   closeModal: () => void;
   hideModal: () => void;
   toggleAdvanced: () => void;
+  setUsePermitRouter: (value: boolean) => void;
 };
 
 export const useModalPromise = create<UseModalPromise>((set, get) => ({
   isAdvanced: false,
   modalOpen: false,
+  usePermitRouter: (() => {
+    const saved = localStorage.getItem('usePermitRouter');
+    return saved !== null ? saved === 'true' : true;
+  })(),
   tx: null,
   openModal: (tx: { to: Address; data: Hex }) => {
     set({ modalOpen: true, tx });
@@ -36,9 +42,9 @@ export const useModalPromise = create<UseModalPromise>((set, get) => ({
   closeModal: () => {
     const { reject } = get();
     if (reject) {
-      reject(new Error("Modal closed"));
+      reject(new Error('Modal closed'));
     } else {
-      console.error("No reject function found");
+      console.error('No reject function found');
     }
     set({ modalOpen: false, resolve: null, reject: null, tx: null });
   },
@@ -47,5 +53,9 @@ export const useModalPromise = create<UseModalPromise>((set, get) => ({
   },
   toggleAdvanced: () => {
     set((state) => ({ isAdvanced: !state.isAdvanced }));
+  },
+  setUsePermitRouter: (value: boolean) => {
+    localStorage.setItem('usePermitRouter', String(value));
+    set({ usePermitRouter: value });
   },
 }));
