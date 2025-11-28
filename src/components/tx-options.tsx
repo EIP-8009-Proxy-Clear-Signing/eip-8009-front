@@ -160,7 +160,7 @@ const transformToMetadata = async (
   checks: Check[],
   publicClient: PublicClient
 ) => {
-  const filteredChecks = checks.filter((check) => check.token !== zeroAddress);
+  const filteredChecks = checks.filter((check) => check.token !== zeroAddress && check.token !== "");
   const ether = checks.find((check) => check.token === zeroAddress);
 
   const checksSymbolRequests = filteredChecks.map(({ token }) => ({
@@ -411,8 +411,12 @@ export const TxOptions = () => {
 
       if (hasOriginalSimulation && originalSimRes) {
         // Get input token (negative diff) from original simulation
+        // Skip native ETH as it doesn't need approval
         const inputChange = originalSimRes.assetChanges.find(
-          (change) => change.value.diff < 0n
+          (change) => 
+            change.value.diff < 0n && 
+            change.token.address !== ethAddress &&
+            change.token.address !== zeroAddress
         );
         if (inputChange) {
           inputTokenAddress = inputChange.token.address as `0x${string}`;
@@ -427,7 +431,7 @@ export const TxOptions = () => {
             buffer: '10%',
           });
         }
-      } else if (swapInfo?.inputToken && swapInfo.inputToken !== zeroAddress) {
+      } else if (swapInfo?.inputToken && swapInfo.inputToken !== zeroAddress && swapInfo.inputToken !== ethAddress) {
         // Fallback to swap info
         inputTokenAddress = swapInfo.inputToken as `0x${string}`;
         
@@ -470,7 +474,9 @@ export const TxOptions = () => {
 
       if (isTokenSwap) {
         shouldUseApproveRouter = true;
-        console.log('📝 Will use ApproveRouter for token swap');
+        console.log('📝 Token swap detected - will use ApproveRouter/PermitRouter');
+      } else {
+        console.log('📝 No token approval needed (native ETH or no input token) - will use BasicProxy');
       }
 
       const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
