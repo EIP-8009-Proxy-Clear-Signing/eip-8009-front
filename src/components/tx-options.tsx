@@ -7,11 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Input } from './ui/input';
-import { Checkbox } from './ui/checkbox';
 import { Loader2, X } from 'lucide-react';
 import {
   Check,
@@ -70,6 +68,7 @@ import {
   PermitData,
   generatePermitSignature,
 } from '@/lib/permit-utils';
+import { Label } from './ui/label';
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -227,6 +226,7 @@ export const TxOptions = () => {
     hideModal,
     isAdvanced,
     toggleAdvanced,
+    usePermitRouter,
   } = useModalPromise();
   const { address } = useAccount();
   const chainId = useChainId();
@@ -259,19 +259,10 @@ export const TxOptions = () => {
   } = useChecks();
 
   const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
-  
-  const [usePermitRouter, setUsePermitRouter] = useState<boolean>(() => {
-    const saved = localStorage.getItem('usePermitRouter');
-    return saved !== null ? saved === 'true' : true;
-  });
 
   // Store permit signatures for multiple tokens to reuse between simulation calls and execution
   // Key: token address (lowercase), Value: permit signature data
   const permitSignaturesRef = useRef<Map<string, PermitData>>(new Map());
-
-  useEffect(() => {
-    localStorage.setItem('usePermitRouter', String(usePermitRouter));
-  }, [usePermitRouter]);
 
   const resetCheckState = useCallback(() => {
     for (let i = checks.approvals.length - 1; i >= 0; i--) {
@@ -1583,21 +1574,6 @@ export const TxOptions = () => {
               onBlur={handleBlur}
               placeholder="Slippage"
             />
-            <div className="flex items-center space-x-2 pt-2">
-              <Checkbox
-                id="use-permit-router"
-                checked={usePermitRouter}
-                onCheckedChange={(checked: boolean) => 
-                  setUsePermitRouter(checked === true)
-                }
-              />
-              <Label
-                htmlFor="use-permit-router"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Use Permit Router (gasless approvals via EIP-2612 signatures)
-              </Label>
-            </div>
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>
@@ -1707,21 +1683,6 @@ export const TxOptions = () => {
                     + {check.balance.toFixed(6)} {check.symbol}
                   </p>
                 ))}
-            </div>
-            <div className="flex items-center space-x-2 pt-2">
-              <Checkbox
-                id="use-permit-router-simple"
-                checked={usePermitRouter}
-                onCheckedChange={(checked: boolean) => 
-                  setUsePermitRouter(checked === true)
-                }
-              />
-              <Label
-                htmlFor="use-permit-router-simple"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Use Permit Router (gasless approvals)
-              </Label>
             </div>
           </div>
         )}
