@@ -300,6 +300,16 @@ export const TxOptions = () => {
       return;
     }
 
+    // Create abort controller for this operation
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const checkAborted = () => {
+      if (abortController.signal.aborted) {
+        throw new Error('Operation aborted - modal was closed');
+      }
+    };
+
     try {
       /**
        * SECURE TWO-PHASE SIMULATION FLOW:
@@ -483,6 +493,9 @@ export const TxOptions = () => {
       if (isTokenSwap && inputTokenAddress && walletClient) {
         console.log('🔍 Checking token approval for simulation...');
         
+        // Check if operation was aborted
+        checkAborted();
+        
         // Check current allowance
         const [currentAllowance, tokenSymbol] = await publicClient.multicall({
           contracts: [
@@ -525,6 +538,10 @@ export const TxOptions = () => {
               willUsePermitForExecution = true;
             } else {
               console.log(`📝 Token ${tokenSymbol} supports permit - will collect signature for simulation and execution`);
+              
+              // Check if operation was aborted before requesting permit
+              checkAborted();
+              
               toast.info(`Requesting permit signature for ${tokenSymbol}...`, {
                 duration: 3000,
               });
@@ -543,6 +560,9 @@ export const TxOptions = () => {
                   walletClient
                 );
                 
+                // Check if operation was aborted during permit signing
+                checkAborted();
+                
                 // Store for reuse in subsequent calls
                 permitSignaturesRef.current.set(tokenKey, permitSignature);
                 
@@ -558,6 +578,10 @@ export const TxOptions = () => {
           } else {
             // Request standard approval
             console.log('📝 Requesting standard approval...');
+            
+            // Check if operation was aborted before requesting approval
+            checkAborted();
+            
             toast.info(`Requesting approval for ${tokenSymbol}...`, {
               duration: 3000,
             });
@@ -570,12 +594,18 @@ export const TxOptions = () => {
                 args: [targetContract.address, approvalAmount],
               });
 
+              // Check if operation was aborted during approval transaction
+              checkAborted();
+
               console.log('⏳ Waiting for approval transaction:', hash);
               toast.info('Waiting for approval transaction...', {
                 duration: 5000,
               });
 
               const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+              // Check if operation was aborted while waiting for confirmation
+              checkAborted();
 
               if (receipt.status === 'reverted') {
                 throw new Error('Approval transaction reverted');
@@ -772,6 +802,9 @@ export const TxOptions = () => {
       let appDecimals = 18;
 
       if (!isFromEth && from?.token?.address) {
+        // Check if operation was aborted before fetching metadata
+        checkAborted();
+        
         [appSymbol, appDecimals] = await publicClient.multicall({
           contracts: [
             {
@@ -812,6 +845,9 @@ export const TxOptions = () => {
         to.token.address !== zeroAddress &&
         to.token.address !== ethAddress
       ) {
+        // Check if operation was aborted before fetching metadata
+        checkAborted();
+        
         [withSymbol, withDecimals] = await publicClient.multicall({
           contracts: [
             {
@@ -888,11 +924,25 @@ export const TxOptions = () => {
 
       console.log('✅ Form populated with real values from proxy simulation');
     } catch (error) {
+      // Check if error is due to abort
+      if (
+        error instanceof Error &&
+        error.message === 'Operation aborted - modal was closed'
+      ) {
+        console.log('🛑 setDataToForm was aborted - modal was closed');
+        return;
+      }
+      
       console.error('❌ Error in setDataToForm:', error);
       toast.error(
         `Failed to prepare transaction: ${error instanceof Error ? error.message : String(error)}`
       );
       return;
+    } finally {
+      // Clear abort controller if operation completed
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
     }
   }, [
     publicClient,
@@ -923,8 +973,7 @@ export const TxOptions = () => {
 
   useEffect(() => {
     if (!modalOpen && abortControllerRef.current) {
-      console.log('⚠️ Modal closed - aborting transaction');
-      toast.error('Transaction aborted by user');
+      console.log('⚠️ Modal closed - aborting all operations');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
@@ -1183,6 +1232,9 @@ export const TxOptions = () => {
 
             // Calculate deadline (1 hour from now)
             const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+
+            // Check if transaction was aborted before requesting permit signature
+            checkAborted();
 
             toast.info(
               `Requesting permit signature for ${token.symbol || tokenAddress}...`,
