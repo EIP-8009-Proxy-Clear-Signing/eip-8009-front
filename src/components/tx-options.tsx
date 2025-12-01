@@ -72,7 +72,8 @@ import { Label } from './ui/label';
 
 const formatter = new Intl.NumberFormat('en-US', {
   style: 'decimal',
-  notation: 'compact',
+  notation: 'standard',
+  maximumSignificantDigits: 6,
 });
 
 function swapAddressInArgsTraverse<T>(
