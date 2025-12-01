@@ -70,6 +70,11 @@ import {
 } from '@/lib/permit-utils';
 import { Label } from './ui/label';
 
+const formatter = new Intl.NumberFormat('en-US', {
+  style: 'decimal',
+  notation: 'compact',
+});
+
 function swapAddressInArgsTraverse<T>(
   args: T,
   from: string,
@@ -1269,10 +1274,7 @@ export const TxOptions = () => {
 
       let hash: `0x${string}` = '0x';
 
-      console.log('MODE USAGE:', mode, {
-        shouldUseApproveRouter,
-        shouldUsePermitRouter,
-      });
+      console.log('MODE USAGE:', mode, diffs);
 
       if (safe && safeInfo) {
         const mainTx = {
@@ -1412,7 +1414,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else if (shouldUsePermitRouter) {
-              console.log({diffs})
 
               hash = await writeContractAsync({
                 abi: targetContract.abi,
@@ -1430,7 +1431,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
-              console.log({diffs})
 
               hash = await writeContractAsync({
                 abi: targetContract.abi,
@@ -1716,21 +1716,21 @@ export const TxOptions = () => {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
-              {checks.approvals
-                .filter((check) => check.token != '')
+              {checks.diffs
+                .filter((check) => check.token != '' && check.balance < 0)
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    - {check.balance.toFixed(6)} {check.symbol}
+                    - {formatter.format(Math.abs(check.balance))} {check.symbol}
                   </p>
                 ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
-              {checks.withdrawals
-                .filter((check) => check.token != '')
+              {checks.diffs
+                .filter((check) => check.token != '' && check.balance > 0)
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    + {check.balance.toFixed(6)} {check.symbol}
+                    + {formatter.format(check.balance)} {check.symbol}
                   </p>
                 ))}
             </div>
