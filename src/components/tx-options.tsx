@@ -222,6 +222,8 @@ const transformToMetadata = async (
 
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState<string>('');
+  const [isSimulationComplete, setIsSimulationComplete] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const {
@@ -266,8 +268,6 @@ export const TxOptions = () => {
 
   const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
 
-  // Store permit signatures for multiple tokens to reuse between simulation calls and execution
-  // Key: token address (lowercase), Value: permit signature data
   const permitSignaturesRef = useRef<Map<string, PermitData>>(new Map());
 
   const resetCheckState = useCallback(() => {
@@ -286,8 +286,9 @@ export const TxOptions = () => {
     for (let i = checks.postTransfer.length - 1; i >= 0; i--) {
       removePostTransferCheck(i);
     }
-    // Clear all stored permit signatures
     permitSignaturesRef.current.clear();
+    setIsSimulationComplete(false);
+    setLoadingStep('');
   }, [
     checks.approvals.length,
     checks.diffs.length,
@@ -305,6 +306,10 @@ export const TxOptions = () => {
     if (!publicClient || tx === null || !address) {
       return;
     }
+
+    // Reset simulation state
+    setIsSimulationComplete(false);
+    setLoadingStep('Initializing...');
 
     // Create abort controller for this operation
     const abortController = new AbortController();
@@ -348,6 +353,7 @@ export const TxOptions = () => {
       );
 
       // Step 2: Try to simulate ORIGINAL transaction to get approximate changes
+      setLoadingStep('Simulating original transaction...');
       console.log('🔍 Step 1: Simulating ORIGINAL transaction for approximate changes...');
       let originalSimRes;
       let hasOriginalSimulation = false;
@@ -392,6 +398,7 @@ export const TxOptions = () => {
       }
 
       // Step 3: Modify transaction calldata for proxy execution
+      setLoadingStep('Modifying transaction calldata...');
       console.log('🔍 Step 2: Modifying transaction calldata for proxy...');
       let modifiedData = tx.data;
 
@@ -497,6 +504,7 @@ export const TxOptions = () => {
       }
 
       if (isTokenSwap && inputTokenAddress && walletClient) {
+        setLoadingStep('Checking token approvals...');
         console.log('🔍 Checking token approval for simulation...');
         
         // Check if operation was aborted
@@ -543,6 +551,7 @@ export const TxOptions = () => {
               permitSignature = storedPermit;
               willUsePermitForExecution = true;
             } else {
+              setLoadingStep(`Requesting permit signature for ${tokenSymbol}...`);
               console.log(`📝 Token ${tokenSymbol} supports permit - will collect signature for simulation and execution`);
               
               // Check if operation was aborted before requesting permit
@@ -583,6 +592,7 @@ export const TxOptions = () => {
             }
           } else {
             // Request standard approval
+            setLoadingStep(`Requesting approval for ${tokenSymbol}...`);
             console.log('📝 Requesting standard approval...');
             
             // Check if operation was aborted before requesting approval
@@ -632,6 +642,7 @@ export const TxOptions = () => {
       }
 
       // Step 7: Build simulation call for MODIFIED transaction through proxy
+      setLoadingStep('Simulating modified transaction through proxy...');
       console.log('🔍 Step 3: Simulating MODIFIED transaction through proxy...');
 
       // Determine which contract to use for simulation
@@ -677,7 +688,7 @@ export const TxOptions = () => {
           functionName: 'permitProxyCallDiffsWithMeta',
           args: [
             proxy.address,
-            [], // Empty diffs - we'll get real ones from simulation
+            [],
             approvals,
             [permitSignature], // Pass the permit signature
             tx.to,
@@ -692,7 +703,7 @@ export const TxOptions = () => {
           functionName: 'approveProxyCallDiffsWithMeta',
           args: [
             proxy.address,
-            [], // Empty diffs - we'll get real ones from simulation
+            [],
             approvals,
             tx.to,
             modifiedData,
@@ -924,6 +935,8 @@ export const TxOptions = () => {
         }
       }
 
+      setLoadingStep('');
+      setIsSimulationComplete(true);
       console.log('✅ Form populated with real values from proxy simulation');
     } catch (error) {
       // Check if error is due to abort
@@ -1738,6 +1751,13 @@ export const TxOptions = () => {
           </div>
         )}
 
+        {loadingStep && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{loadingStep}</span>
+          </div>
+        )}
+
         <DialogFooter className="flex items-center justify-between">
           <Button
             variant="outline"
@@ -1748,9 +1768,12 @@ export const TxOptions = () => {
           >
             Close
           </Button>
-          <Button onClick={handleSave} disabled={isLoading}>
+          <Button 
+            onClick={handleSave} 
+            disabled={isLoading || !isSimulationComplete}
+          >
             {isLoading && <Loader2 className="animate-spin" />}{' '}
-            {isLoading ? 'Saving...' : 'Save'}
+            {isLoading ? 'Saving...' : !isSimulationComplete ? 'Preparing...' : 'Save'}
           </Button>
         </DialogFooter>
       </DialogContent>
