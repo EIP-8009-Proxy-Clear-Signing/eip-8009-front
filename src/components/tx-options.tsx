@@ -889,21 +889,17 @@ export const TxOptions = () => {
               (1 - slippage / 100),
           });
 
-          const isEthInput =
-            from?.token.address === zeroAddress ||
-            from?.token.address === ethAddress;
+          // Always add the input token to diffs (including ETH)
           const inputBalance = -(
             formatBalance(from?.value.diff, from?.token.decimals) *
             (1 + slippage / 100)
           );
 
-          if (!isEthInput || inputBalance >= 0) {
-            changeDiffsCheck(1, {
-              target: String(address),
-              token: formatToken(from?.token.symbol, from?.token.address),
-              balance: inputBalance,
-            });
-          }
+          changeDiffsCheck(1, {
+            target: String(address),
+            token: formatToken(from?.token.symbol, from?.token.address),
+            balance: inputBalance,
+          });
 
           break;
         }
@@ -1434,6 +1430,8 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
+              console.log({diffs})
+
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
