@@ -437,7 +437,7 @@ export const TxOptions = () => {
           // Add 10% buffer to approval amount to account for slippage/rounding
           const rawAmount = -inputChange.value.diff;
           approvalAmount = rawAmount;
-          // approvalAmount = rawAmount + (rawAmount * 1n / 1000n);
+          // approvalAmount = BigInt(Math.ceil(Number(rawAmount) * (1 + slippage / 100)));
           console.log('📊 From original simulation:', {
             token: inputTokenAddress,
             amount: approvalAmount.toString(),
@@ -631,8 +631,7 @@ export const TxOptions = () => {
               toast.success(`${tokenSymbol} approved successfully!`);
             } catch (error) {
               console.error('❌ Approval failed:', error);
-              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-              toast.error(`Approval failed: ${errorMessage}`);
+              toast.error(`Approval failed!`);
               return;
             }
           }
@@ -784,6 +783,48 @@ export const TxOptions = () => {
       const isFromEth =
         from?.token.address === zeroAddress ||
         from?.token.address === ethAddress;
+
+      // Step 9.5: Check if user has sufficient balance for the transaction
+      // IMPORTANT: We need to check against the amount WITH slippage buffer,
+      // not just the raw diff, because that's what will actually be used
+      const rawAmount = -from.value.diff;
+      const requiredAmount = BigInt(
+        Math.ceil(Number(rawAmount) * (1 + slippage / 100))
+      );
+      
+      let userBalance: bigint;
+
+      if (isFromEth) {
+        // For ETH, get the user's ETH balance
+        userBalance = await publicClient.getBalance({ address });
+      } else {
+        // For ERC20 tokens, get the token balance
+        userBalance = await publicClient.readContract({
+          abi: erc20Abi,
+          address: from.token.address as `0x${string}`,
+          functionName: 'balanceOf',
+          args: [address],
+        });
+      }
+
+      console.log('💰 Balance check:', {
+        token: from.token.symbol,
+        rawAmount: rawAmount.toString(),
+        requiredWithSlippage: requiredAmount.toString(),
+        slippagePercent: slippage,
+        available: userBalance.toString(),
+        sufficient: userBalance >= requiredAmount,
+      });
+
+      if (userBalance < requiredAmount) {
+        const shortfall = requiredAmount - userBalance;
+        console.error('❌ Insufficient balance for transaction');
+        toast.error(
+          `Insufficient ${from.token.symbol} balance. You need ${formatBalance(requiredAmount, from.token.decimals)} (including ${slippage}% slippage buffer) but only have ${formatBalance(userBalance, from.token.decimals)}. Shortfall: ${formatBalance(shortfall, from.token.decimals)} ${from.token.symbol}`,
+          { duration: 10000 }
+        );
+        return;
+      }
 
       // Create approval check if not exists
       if (!checks.approvals.length) {
@@ -950,7 +991,7 @@ export const TxOptions = () => {
       
       console.error('❌ Error in setDataToForm:', error);
       toast.error(
-        `Failed to prepare transaction: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to prepare transaction!`
       );
       return;
     } finally {
@@ -1276,9 +1317,7 @@ export const TxOptions = () => {
             permitSignatures.push(permitData);
           } catch (error) {
             console.error('❌ Failed to collect permit signature:', error);
-            const errorMessage =
-              error instanceof Error ? error.message : 'Unknown error';
-            toast.error(`Failed to get permit signature: ${errorMessage}`);
+            toast.error(`Failed to get permit signature!`);
             throw error;
           }
         }
@@ -1556,9 +1595,7 @@ export const TxOptions = () => {
         console.log('🛑 Transaction was aborted by user');
         toast.info('Transaction cancelled');
       } else {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        toast.error(`Transaction failed: ${errorMessage}`);
+        toast.error(`Transaction failed!`);
       }
 
       closeModal();
