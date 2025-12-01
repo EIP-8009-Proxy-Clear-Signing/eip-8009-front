@@ -7,11 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-import { Label } from './ui/label';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Input } from './ui/input';
-import { Checkbox } from './ui/checkbox';
 import { Loader2, X } from 'lucide-react';
 import {
   Check,
@@ -64,11 +62,19 @@ import {
   logUniversalRouterCommands,
   modifyUniversalRouterCalldata,
 } from '@/lib/uniswap-router';
+import { extractSwapInfo } from '@/lib/extract-swap-info';
 import {
   supportsPermit,
   PermitData,
   generatePermitSignature,
 } from '@/lib/permit-utils';
+import { Label } from './ui/label';
+
+const formatter = new Intl.NumberFormat('en-US', {
+  style: 'decimal',
+  notation: 'standard',
+  maximumSignificantDigits: 6,
+});
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -159,7 +165,7 @@ const transformToMetadata = async (
   checks: Check[],
   publicClient: PublicClient
 ) => {
-  const filteredChecks = checks.filter((check) => check.token !== zeroAddress);
+  const filteredChecks = checks.filter((check) => check.token !== zeroAddress && check.token !== "");
   const ether = checks.find((check) => check.token === zeroAddress);
 
   const checksSymbolRequests = filteredChecks.map(({ token }) => ({
@@ -216,6 +222,8 @@ const transformToMetadata = async (
 
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState<string>('');
+  const [isSimulationComplete, setIsSimulationComplete] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const {
@@ -226,6 +234,7 @@ export const TxOptions = () => {
     hideModal,
     isAdvanced,
     toggleAdvanced,
+    usePermitRouter,
   } = useModalPromise();
   const { address } = useAccount();
   const chainId = useChainId();
@@ -258,15 +267,8 @@ export const TxOptions = () => {
   } = useChecks();
 
   const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
-  
-  const [usePermitRouter, setUsePermitRouter] = useState<boolean>(() => {
-    const saved = localStorage.getItem('usePermitRouter');
-    return saved !== null ? saved === 'true' : true;
-  });
 
-  useEffect(() => {
-    localStorage.setItem('usePermitRouter', String(usePermitRouter));
-  }, [usePermitRouter]);
+  const permitSignaturesRef = useRef<Map<string, PermitData>>(new Map());
 
   const resetCheckState = useCallback(() => {
     for (let i = checks.approvals.length - 1; i >= 0; i--) {
@@ -284,6 +286,9 @@ export const TxOptions = () => {
     for (let i = checks.postTransfer.length - 1; i >= 0; i--) {
       removePostTransferCheck(i);
     }
+    permitSignaturesRef.current.clear();
+    setIsSimulationComplete(false);
+    setLoadingStep('');
   }, [
     checks.approvals.length,
     checks.diffs.length,
@@ -298,209 +303,712 @@ export const TxOptions = () => {
   ]);
 
   const setDataToForm = useCallback(async () => {
-    if (!publicClient || tx === null) {
+    if (!publicClient || tx === null || !address) {
       return;
     }
 
-    let retries = 100;
+    // Reset simulation state
+    setIsSimulationComplete(false);
+    setLoadingStep('Initializing...');
 
-    let simRes;
+    // Create abort controller for this operation
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
-    while (retries > 0) {
-      try {
-        simRes = await publicClient.simulateCalls({
-          traceAssetChanges: true,
-          account: address,
-          calls: [
+    const checkAborted = () => {
+      if (abortController.signal.aborted) {
+        throw new Error('Operation aborted - modal was closed');
+      }
+    };
+
+    try {
+      /**
+       * SECURE TWO-PHASE SIMULATION FLOW:
+       * 
+       * Phase 1: Original Transaction (for security verification)
+       * - Simulate the ORIGINAL Uniswap transaction with real Permit2 signature
+       * - This may fail (expected) because Permit2 validation happens on-chain
+       * - If it succeeds, we get approximate asset changes for validation
+       * 
+       * Phase 2: Modified Transaction (for proxy execution)
+       * - Modify the calldata: remove Permit2 commands, adjust V4 payer flags
+       * - Simulate through our proxy routers (ApproveRouter/BasicProxy)
+       * - Get REAL asset changes that will be shown to the user
+       * - Populate the modal with accurate swap amounts
+       * 
+       * This two-phase approach provides:
+       * ✅ Security: User sees what Uniswap intended (Phase 1)
+       * ✅ Accuracy: User sees what will actually happen (Phase 2)
+       * ✅ Transparency: Both simulations are logged for verification
+       */
+      
+      // Step 1: Get contract references
+      const proxy = getContract('proxy', chainId);
+      const uniswapRouter = getContract('uniswapRouter', chainId);
+      const approveRouter = getContract('proxyApproveRouter', chainId);
+
+      const isUniversalRouter = isUniversalRouterTransaction(
+        tx.to,
+        uniswapRouter.address
+      );
+
+      // Step 2: Try to simulate ORIGINAL transaction to get approximate changes
+      setLoadingStep('Simulating original transaction...');
+      console.log('🔍 Step 1: Simulating ORIGINAL transaction for approximate changes...');
+      let originalSimRes;
+      let hasOriginalSimulation = false;
+
+      // Retry logic for original simulation (may fail due to network issues)
+      let originalSimRetries = 100;
+      while (originalSimRetries > 0 && !hasOriginalSimulation) {
+        try {
+          originalSimRes = await publicClient.simulateCalls({
+            traceAssetChanges: true,
+            account: address,
+            calls: [
+              {
+                to: tx.to as `0x${string}`,
+                data: tx.data as `0x${string}`,
+                value: BigInt(tx.value || 0),
+              },
+            ],
+          });
+
+          if (originalSimRes.results[0].status === 'success') {
+            console.log('✅ Original simulation successful:', originalSimRes.assetChanges);
+            hasOriginalSimulation = true;
+          } else {
+            console.warn('⚠️ Original simulation returned failure status');
+            originalSimRetries -= 1;
+            if (originalSimRetries > 0) {
+              console.log(`🔄 Retrying original simulation (${originalSimRetries} attempts left)...`);
+              await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
+            }
+          }
+        } catch (error) {
+          originalSimRetries -= 1;
+          if (originalSimRetries > 0) {
+            console.warn(`⚠️ Original simulation failed, retrying (${originalSimRetries} attempts left)...`);
+            await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
+          } else {
+            console.warn('⚠️ Original simulation failed after all retries (expected for Permit2):', error);
+            console.log('💡 Will use modified transaction simulation for all values');
+          }
+        }
+      }
+
+      // Step 3: Modify transaction calldata for proxy execution
+      setLoadingStep('Modifying transaction calldata...');
+      console.log('🔍 Step 2: Modifying transaction calldata for proxy...');
+      let modifiedData = tx.data;
+
+      if (isUniversalRouter) {
+        const modified = modifyUniversalRouterCalldata(
+          tx.data,
+          uniswapRouter,
+          address
+        );
+        modifiedData = modified ?? tx.data;
+        console.log('✅ Calldata modified for Universal Router');
+      }
+
+      // Step 4: Extract swap info to determine router and build approvals
+      const swapInfo = isUniversalRouter
+        ? extractSwapInfo(tx.data, uniswapRouter.abi)
+        : null;
+
+      console.log('🔍 Swap info:', swapInfo);
+
+      // Step 5: Build approximate diffs and approvals from original simulation if available
+      let approvalAmount = 0n;
+      let inputTokenAddress: `0x${string}` | null = null;
+
+      if (hasOriginalSimulation && originalSimRes) {
+        // Get input token (negative diff) from original simulation
+        // Skip native ETH as it doesn't need approval
+        const inputChange = originalSimRes.assetChanges.find(
+          (change) => 
+            change.value.diff < 0n && 
+            change.token.address !== ethAddress &&
+            change.token.address !== zeroAddress
+        );
+        if (inputChange) {
+          inputTokenAddress = inputChange.token.address as `0x${string}`;
+          // Add 10% buffer to approval amount to account for slippage/rounding
+          const rawAmount = -inputChange.value.diff;
+          approvalAmount = rawAmount;
+          // approvalAmount = BigInt(Math.ceil(Number(rawAmount) * (1 + slippage / 100)));
+          console.log('📊 From original simulation:', {
+            token: inputTokenAddress,
+            amount: approvalAmount.toString(),
+            rawAmount: rawAmount.toString(),
+            buffer: '10%',
+          });
+        }
+      } else if (swapInfo?.inputToken && swapInfo.inputToken !== zeroAddress && swapInfo.inputToken !== ethAddress) {
+        // Fallback to swap info
+        inputTokenAddress = swapInfo.inputToken as `0x${string}`;
+        
+        if (swapInfo.inputAmount > 0n) {
+          approvalAmount = swapInfo.inputAmount;
+        } else {
+          // V4 or case where we don't have amount - check user's token balance
+          try {
+            const balance = await publicClient.readContract({
+              address: inputTokenAddress,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [address],
+            });
+            // Use the user's full balance as approval amount (they probably want to swap it all)
+            approvalAmount = balance;
+            console.log('📊 Using user balance for approval:', {
+              token: inputTokenAddress,
+              balance: balance.toString(),
+            });
+          } catch {
+            // If we can't get balance, use a reasonably large number (1 trillion tokens with 18 decimals)
+            approvalAmount = BigInt('1000000000000000000000000'); // 1M tokens
+            console.warn('⚠️ Could not get token balance, using default approval amount');
+          }
+        }
+        
+        console.log('📊 From swap info (fallback):', {
+          token: inputTokenAddress,
+          amount: approvalAmount.toString(),
+        });
+      }
+
+      // Step 6: Determine which router to use and check/request approvals BEFORE simulation
+      let shouldUseApproveRouter = false;
+      let willUsePermitForExecution = false;
+      let permitSignature: PermitData | null = null;
+      const isTokenSwap =
+        inputTokenAddress && inputTokenAddress !== zeroAddress && inputTokenAddress !== ethAddress;
+
+      if (isTokenSwap) {
+        shouldUseApproveRouter = true;
+        console.log('📝 Token swap detected - will use ApproveRouter/PermitRouter');
+      } else {
+        console.log('📝 No token approval needed (native ETH or no input token) - will use BasicProxy');
+      }
+
+      const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
+      const permitRouter = getContract('proxyPermitRouter', chainId);
+
+      // Step 6.5: Check and request approvals/permits BEFORE simulation
+      if (isTokenSwap && inputTokenAddress && !walletClient) {
+        console.error('❌ Wallet client required for token approvals');
+        toast.error('Please connect your wallet to continue');
+        return;
+      }
+
+      if (isTokenSwap && inputTokenAddress && walletClient) {
+        setLoadingStep('Checking token approvals...');
+        console.log('🔍 Checking token approval for simulation...');
+        
+        // Check if operation was aborted
+        checkAborted();
+        
+        // Check current allowance
+        const [currentAllowance, tokenSymbol] = await publicClient.multicall({
+          contracts: [
             {
-              to: tx.to as `0x${string}`,
-              data: tx.data as `0x${string}`,
-              value: BigInt(tx.value || 0),
+              abi: erc20Abi,
+              address: inputTokenAddress,
+              functionName: 'allowance',
+              args: [address, targetContract.address],
+            },
+            {
+              abi: erc20Abi,
+              address: inputTokenAddress,
+              functionName: 'symbol',
             },
           ],
+          allowFailure: false,
         });
 
-        break;
-      } catch (error) {
-        console.warn('⚠️ Simulation failed:', error);
-        console.log(
-          '💡 Please manually configure approval and withdrawal checks'
-        );
+        console.log('📊 Current allowance:', {
+          token: tokenSymbol,
+          current: currentAllowance.toString(),
+          needed: approvalAmount.toString(),
+        });
 
-        retries -= 1;
+        // Check if approval is needed
+        if (currentAllowance < approvalAmount) {
+          console.log('⚠️ Insufficient allowance - requesting approval...');
+          
+          // Check if token supports permit (EIP-2612)
+          const tokenSupportsPermit = await supportsPermit(inputTokenAddress, publicClient);
+          
+          if (usePermitRouter && tokenSupportsPermit) {
+            // Check if we already have a stored permit signature for this token
+            const tokenKey = inputTokenAddress.toLowerCase();
+            const storedPermit = permitSignaturesRef.current.get(tokenKey);
+            
+            if (storedPermit) {
+              console.log(`✅ Reusing stored permit signature for ${tokenSymbol} (${inputTokenAddress})`);
+              permitSignature = storedPermit;
+              willUsePermitForExecution = true;
+            } else {
+              setLoadingStep(`Requesting permit signature for ${tokenSymbol}...`);
+              console.log(`📝 Token ${tokenSymbol} supports permit - will collect signature for simulation and execution`);
+              
+              // Check if operation was aborted before requesting permit
+              checkAborted();
+              
+              toast.info(`Requesting permit signature for ${tokenSymbol}...`, {
+                duration: 3000,
+              });
+
+              try {
+                const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour
+                
+                // Generate permit signature - will be used for both simulation and execution
+                permitSignature = await generatePermitSignature(
+                  inputTokenAddress,
+                  address,
+                  permitRouter.address, // Permit to PermitRouter
+                  approvalAmount,
+                  deadline,
+                  publicClient,
+                  walletClient
+                );
+                
+                // Check if operation was aborted during permit signing
+                checkAborted();
+                
+                // Store for reuse in subsequent calls
+                permitSignaturesRef.current.set(tokenKey, permitSignature);
+                
+                willUsePermitForExecution = true;
+                console.log(`✅ Permit signature collected for ${tokenSymbol} - will use for simulation and execution`);
+                toast.success(`Permit granted for ${tokenSymbol}`);
+              } catch (error) {
+                console.error('❌ Permit signature failed:', error);
+                toast.error('Failed to get permit signature - please try standard approval');
+                return;
+              }
+            }
+          } else {
+            // Request standard approval
+            setLoadingStep(`Requesting approval for ${tokenSymbol}...`);
+            console.log('📝 Requesting standard approval...');
+            
+            // Check if operation was aborted before requesting approval
+            checkAborted();
+            
+            toast.info(`Requesting approval for ${tokenSymbol}...`, {
+              duration: 3000,
+            });
+
+            try {
+              const hash = await walletClient.writeContract({
+                abi: erc20Abi,
+                address: inputTokenAddress,
+                functionName: 'approve',
+                args: [targetContract.address, approvalAmount],
+              });
+
+              // Check if operation was aborted during approval transaction
+              checkAborted();
+
+              console.log('⏳ Waiting for approval transaction:', hash);
+              toast.info('Waiting for approval transaction...', {
+                duration: 5000,
+              });
+
+              const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+              // Check if operation was aborted while waiting for confirmation
+              checkAborted();
+
+              if (receipt.status === 'reverted') {
+                throw new Error('Approval transaction reverted');
+              }
+
+              console.log('✅ Approval confirmed - proceeding with simulation');
+              toast.success(`${tokenSymbol} approved successfully!`);
+            } catch (error) {
+              console.error('❌ Approval failed:', error);
+              toast.error(`Approval failed!`);
+              return;
+            }
+          }
+        } else {
+          console.log('✅ Sufficient allowance already exists');
+        }
       }
-    }
 
-    if (!simRes) {
+      // Step 7: Build simulation call for MODIFIED transaction through proxy
+      setLoadingStep('Simulating modified transaction through proxy...');
+      console.log('🔍 Step 3: Simulating MODIFIED transaction through proxy...');
+
+      // Determine which contract to use for simulation
+      // If we have a permit signature, use PermitRouter for both simulation and execution
+      // Otherwise use the target contract (ApproveRouter with approval already done)
+      const simulationContract = willUsePermitForExecution ? permitRouter : targetContract;
+
+      let simulationData: `0x${string}`;
+      const approvals =
+        isTokenSwap && inputTokenAddress
+          ? [
+              {
+                balance: {
+                  target: tx.to as `0x${string}`,
+                  token: inputTokenAddress,
+                  balance: approvalAmount,
+                },
+                useTransfer: true,
+              },
+            ]
+          : [];
+
+      console.log('📋 Simulation config:', {
+        shouldUseApproveRouter,
+        willUsePermitForExecution,
+        hasPermitSignature: !!permitSignature,
+        simulationContract: simulationContract.address,
+        executionContract: willUsePermitForExecution ? permitRouter.address : targetContract.address,
+        approvals: approvals.map(a => ({
+          target: a.balance.target,
+          token: a.balance.token,
+          balance: a.balance.balance.toString(),
+          useTransfer: a.useTransfer,
+        })),
+        txTo: tx.to,
+        modifiedDataLength: modifiedData.length,
+      });
+
+      if (willUsePermitForExecution && permitSignature) {
+        // Use PermitRouter for simulation with the permit signature
+        simulationData = encodeFunctionData({
+          abi: permitRouter.abi,
+          functionName: 'permitProxyCallDiffsWithMeta',
+          args: [
+            proxy.address,
+            [],
+            approvals,
+            [permitSignature], // Pass the permit signature
+            tx.to,
+            modifiedData,
+            [],
+          ],
+        }) as `0x${string}`;
+      } else if (shouldUseApproveRouter && approvals.length > 0) {
+        // Use ApproveRouter for simulation since we have approvals now
+        simulationData = encodeFunctionData({
+          abi: targetContract.abi,
+          functionName: 'approveProxyCallDiffsWithMeta',
+          args: [
+            proxy.address,
+            [],
+            approvals,
+            tx.to,
+            modifiedData,
+            [],
+          ],
+        }) as `0x${string}`;
+      } else {
+        simulationData = encodeFunctionData({
+          abi: proxy.abi,
+          functionName: 'proxyCallDiffsMeta',
+          args: [
+            [], // Empty diffs
+            approvals,
+            tx.to,
+            modifiedData,
+            [],
+          ],
+        }) as `0x${string}`;
+      }
+
+      // Step 8: Simulate the MODIFIED transaction through proxy (with actual approvals in place)
+      let retries = 100;
+      let simRes;
+
+      while (retries > 0) {
+        try {
+          simRes = await publicClient.simulateCalls({
+            traceAssetChanges: true,
+            account: address,
+            calls: [
+              {
+                to: simulationContract.address as `0x${string}`, // Use appropriate contract for simulation
+                data: simulationData,
+                value: BigInt(tx.value || 0),
+              },
+            ],
+          });
+
+          break;
+        } catch (error) {
+          console.warn('⚠️ Proxy simulation failed:', error);
+          console.log(
+            '💡 Please manually configure approval and withdrawal checks'
+          );
+
+          retries -= 1;
+        }
+      }
+
+      if (!simRes) {
+        console.error('❌ Proxy simulation failed after all retries');
+        return;
+      }
+
+      console.log('✅ Proxy simulation successful - showing real values in modal', simRes);
+
+      // Check if simulation actually succeeded
+      if (simRes.results[0].status !== 'success') {
+        console.error('❌ Proxy simulation returned failure status:', simRes.results[0]);
+        toast.error('Simulation failed - please check the transaction parameters');
+        return;
+      }
+
+      // Step 9: Populate form with real values from proxy simulation
+      const from = simRes.assetChanges.find((asset) => asset.value.diff < 0);
+      const to = simRes.assetChanges.find((asset) => asset.value.diff > 0);
+
+      console.log('📊 Asset changes for form:', { from, to });
+
+      if (!from || !to) {
+        console.error('❌ No asset changes detected in simulation');
+        console.log('Asset changes:', simRes.assetChanges);
+        toast.error('Could not detect token swap in simulation - please try again');
+        return;
+      }
+
+      // Detect if input is ETH
+      const isFromEth =
+        from?.token.address === zeroAddress ||
+        from?.token.address === ethAddress;
+
+      // Step 9.5: Check if user has sufficient balance for the transaction
+      // IMPORTANT: We need to check against the amount WITH slippage buffer,
+      // not just the raw diff, because that's what will actually be used
+      const rawAmount = -from.value.diff;
+      const requiredAmount = BigInt(
+        Math.ceil(Number(rawAmount) * (1 + slippage / 100))
+      );
+      
+      let userBalance: bigint;
+
+      if (isFromEth) {
+        // For ETH, get the user's ETH balance
+        userBalance = await publicClient.getBalance({ address });
+      } else {
+        // For ERC20 tokens, get the token balance
+        userBalance = await publicClient.readContract({
+          abi: erc20Abi,
+          address: from.token.address as `0x${string}`,
+          functionName: 'balanceOf',
+          args: [address],
+        });
+      }
+
+      console.log('💰 Balance check:', {
+        token: from.token.symbol,
+        rawAmount: rawAmount.toString(),
+        requiredWithSlippage: requiredAmount.toString(),
+        slippagePercent: slippage,
+        available: userBalance.toString(),
+        sufficient: userBalance >= requiredAmount,
+      });
+
+      if (userBalance < requiredAmount) {
+        const shortfall = requiredAmount - userBalance;
+        console.error('❌ Insufficient balance for transaction');
+        toast.error(
+          `Insufficient ${from.token.symbol} balance. You need ${formatBalance(requiredAmount, from.token.decimals)} (including ${slippage}% slippage buffer) but only have ${formatBalance(userBalance, from.token.decimals)}. Shortfall: ${formatBalance(shortfall, from.token.decimals)} ${from.token.symbol}`,
+          { duration: 10000 }
+        );
+        return;
+      }
+
+      // Create approval check if not exists
+      if (!checks.approvals.length) {
+        createApprovalCheck();
+      }
+
+      if (!checks.withdrawals.length) {
+        createWithdrawalCheck();
+      }
+
+      // Create diff checks based on mode
+      switch (mode) {
+        case 'diifs': {
+          if (!checks.diffs.length) {
+            createDiffsCheck();
+          }
+          if (checks.diffs.length < 2) {
+            createDiffsCheck();
+          }
+          break;
+        }
+
+        case EMode['pre/post']: {
+          if (!checks.postTransfer.length) {
+            createPostTransferCheck();
+          }
+          break;
+        }
+      }
+
+      // Get token symbol and decimals for input token
+      let appSymbol = 'ETH';
+      let appDecimals = 18;
+
+      if (!isFromEth && from?.token?.address) {
+        // Check if operation was aborted before fetching metadata
+        checkAborted();
+        
+        [appSymbol, appDecimals] = await publicClient.multicall({
+          contracts: [
+            {
+              abi: erc20Abi,
+              address: from.token.address as `0x${string}`,
+              functionName: 'symbol' as const,
+              args: [],
+            },
+            {
+              abi: erc20Abi,
+              address: from.token.address as `0x${string}`,
+              functionName: 'decimals' as const,
+              args: [],
+            },
+          ],
+          allowFailure: false,
+        });
+      }
+
+      // Set approval check - use the ACTUAL approval amount we approved
+      // Not the simulation result, to avoid mismatch between approved and used amounts
+      const approvalBalance = formatBalance(approvalAmount, from?.token.decimals);
+
+      changeApprovalCheck(0, {
+        target: tx.to,
+        token: formatToken(from?.token.symbol, from?.token.address),
+        balance: approvalBalance,
+        symbol: appSymbol,
+        decimals: appDecimals,
+      });
+
+      // Get token symbol and decimals for output token
+      let withSymbol = 'ETH';
+      let withDecimals = 18;
+
+      if (
+        to?.token?.address &&
+        to.token.address !== zeroAddress &&
+        to.token.address !== ethAddress
+      ) {
+        // Check if operation was aborted before fetching metadata
+        checkAborted();
+        
+        [withSymbol, withDecimals] = await publicClient.multicall({
+          contracts: [
+            {
+              abi: erc20Abi,
+              address: to.token.address as `0x${string}`,
+              functionName: 'symbol' as const,
+              args: [],
+            },
+            {
+              abi: erc20Abi,
+              address: to.token.address as `0x${string}`,
+              functionName: 'decimals' as const,
+              args: [],
+            },
+          ],
+          allowFailure: false,
+        });
+      }
+
+      // Set withdrawal check with slippage
+      changeWithdrawalCheck(0, {
+        target: String(address),
+        token: formatToken(to?.token.symbol, to?.token.address),
+        balance:
+          formatBalance(to?.value.diff, to?.token.decimals) *
+          (1 - slippage / 100),
+        symbol: withSymbol,
+        decimals: withDecimals,
+      });
+
+      // Set diff checks based on mode
+      switch (mode) {
+        case EMode.diifs: {
+          changeDiffsCheck(0, {
+            target: String(address),
+            token: formatToken(to?.token.symbol, to?.token.address),
+            balance:
+              formatBalance(to?.value.diff, to?.token.decimals) *
+              (1 - slippage / 100),
+          });
+
+          // Always add the input token to diffs (including ETH)
+          const inputBalance = -(
+            formatBalance(from?.value.diff, from?.token.decimals) *
+            (1 + slippage / 100)
+          );
+
+          changeDiffsCheck(1, {
+            target: String(address),
+            token: formatToken(from?.token.symbol, from?.token.address),
+            balance: inputBalance,
+          });
+
+          break;
+        }
+
+        case EMode['pre/post']: {
+          changePostTransferCheck(0, {
+            target: String(address),
+            token: formatToken(to?.token.symbol, to?.token.address),
+            balance: formatBalance(
+              BigInt(Number(to?.value.post || 0n) * (1 - slippage / 100)),
+              to?.token.decimals
+            ),
+          });
+
+          break;
+        }
+      }
+
+      setLoadingStep('');
+      setIsSimulationComplete(true);
+      console.log('✅ Form populated with real values from proxy simulation');
+    } catch (error) {
+      // Check if error is due to abort
+      if (
+        error instanceof Error &&
+        error.message === 'Operation aborted - modal was closed'
+      ) {
+        console.log('🛑 setDataToForm was aborted - modal was closed');
+        return;
+      }
+      
+      console.error('❌ Error in setDataToForm:', error);
+      toast.error(
+        `Failed to prepare transaction!`
+      );
       return;
-    }
-
-    const from = simRes.assetChanges.find((asset) => {
-      if (0 > asset.value.diff) {
-        return true;
-      }
-    });
-
-    const to = simRes.assetChanges.find((asset) => {
-      if (0 < asset.value.diff) {
-        return true;
-      }
-    });
-
-    // console.log('FROM > TO', from, to);
-
-    // Detect if input is ETH before creating checks
-    const isFromEth =
-      from?.token.address === zeroAddress || from?.token.address === ethAddress;
-    // const isFromEth = false;
-
-    // Always create approval check (for UI display)
-    // Backend will handle ETH vs token logic appropriately
-    if (!checks.approvals.length) {
-      createApprovalCheck();
-    }
-
-    if (!checks.withdrawals.length) {
-      createWithdrawalCheck();
-    }
-
-    switch (mode) {
-      case 'diifs': {
-        // Create first diff check (always needed for output token)
-        if (!checks.diffs.length) {
-          createDiffsCheck();
-        }
-
-        // Create second diff check for input token (including ETH)
-        if (checks.diffs.length < 2) {
-          createDiffsCheck();
-        }
-        break;
-      }
-
-      case EMode['pre/post']: {
-        if (!checks.postTransfer.length) {
-          createPostTransferCheck();
-        }
-        break;
-      }
-    }
-
-    let appSymbol = 'ETH';
-    let appDecimals = 18;
-
-    if (!isFromEth) {
-      [appSymbol, appDecimals] = await publicClient.multicall({
-        contracts: [
-          {
-            abi: erc20Abi,
-            address: from?.token.address as `0x${string}`,
-            functionName: 'symbol' as const,
-            args: [],
-          },
-          {
-            abi: erc20Abi,
-            address: from?.token.address as `0x${string}`,
-            functionName: 'decimals' as const,
-            args: [],
-          },
-        ],
-        allowFailure: false,
-      });
-    }
-    // Add 0.1% buffer to account for precision loss in number conversion
-    const approvalBalance =
-      formatBalance(from?.value.diff, from?.token.decimals) * 1.001;
-
-    // Only set approval check for non-ETH tokens
-    // ETH is sent via transaction value, not approvals
-    // if (!isFromEth) {
-    changeApprovalCheck(0, {
-      target: tx.to,
-      token: formatToken(from?.token.symbol, from?.token.address),
-      balance: approvalBalance,
-      symbol: appSymbol,
-      decimals: appDecimals,
-    });
-    // }
-
-    let withSymbol = 'ETH';
-    let withDecimals = 18;
-
-    if (to?.token.address !== zeroAddress && to?.token.address !== ethAddress) {
-      [withSymbol, withDecimals] = await publicClient.multicall({
-        contracts: [
-          {
-            abi: erc20Abi,
-            address: to?.token.address as `0x${string}`,
-            functionName: 'symbol' as const,
-            args: [],
-          },
-          {
-            abi: erc20Abi,
-            address: to?.token.address as `0x${string}`,
-            functionName: 'decimals' as const,
-            args: [],
-          },
-        ],
-        allowFailure: false,
-      });
-    }
-
-    changeWithdrawalCheck(0, {
-      target: String(address),
-      token: formatToken(to?.token.symbol, to?.token.address),
-      balance:
-        formatBalance(to?.value.diff, to?.token.decimals) *
-        (1 - slippage / 100),
-      symbol: withSymbol,
-      decimals: withDecimals,
-    });
-
-    switch (mode) {
-      case EMode.diifs: {
-        changeDiffsCheck(0, {
-          target: String(address),
-          token: formatToken(to?.token.symbol, to?.token.address),
-          balance:
-            formatBalance(to?.value.diff, to?.token.decimals) *
-            (1 - slippage / 100),
-        });
-
-        // Always add input diff (including ETH)
-        const inputBalance = -(
-          formatBalance(from?.value.diff, from?.token.decimals) *
-          (1 + slippage / 100)
-        );
-
-        changeDiffsCheck(1, {
-          target: String(address),
-          token: formatToken(from?.token.symbol, from?.token.address),
-          balance: inputBalance,
-        });
-
-        break;
-      }
-
-      case EMode['pre/post']: {
-        changePostTransferCheck(0, {
-          target: String(address),
-          token: formatToken(to?.token.symbol, to?.token.address),
-          balance: formatBalance(
-            BigInt(Number(to?.value.post || 0n) * (1 - slippage / 100)),
-            to?.token.decimals
-          ),
-        });
-
-        break;
+    } finally {
+      // Clear abort controller if operation completed
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
       }
     }
   }, [
     publicClient,
     tx,
     address,
+    chainId,
     slippage,
     mode,
+    walletClient,
+    usePermitRouter,
     checks.approvals.length,
     checks.withdrawals.length,
     checks.diffs.length,
@@ -521,8 +1029,7 @@ export const TxOptions = () => {
 
   useEffect(() => {
     if (!modalOpen && abortControllerRef.current) {
-      console.log('⚠️ Modal closed - aborting transaction');
-      toast.error('Transaction aborted by user');
+      console.log('⚠️ Modal closed - aborting all operations');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
@@ -720,27 +1227,44 @@ export const TxOptions = () => {
       const targetContractAddress = targetContract.address as `0x${string}`;
       const value = tx.value ? BigInt(tx.value) : undefined;
 
-      // Store permit signatures for later use
+      // Store permit signatures for later use (only needed if using permit router)
       const permitSignatures: PermitData[] = [];
 
-      for (let tokenIdx = 0; tokenIdx < approvalsToUse.length; tokenIdx++) {
-        const token = approvalsToUse[tokenIdx];
+      // Only collect permit signatures if using permit router
+      // Standard approvals were already handled in setDataToForm()
+      if (shouldUsePermitRouter) {
+        for (let tokenIdx = 0; tokenIdx < approvalsToUse.length; tokenIdx++) {
+          const token = approvalsToUse[tokenIdx];
 
-        if (
-          !token.token ||
-          token.token === '' ||
-          token.token === zeroAddress ||
-          token.token === ethAddress
-        ) {
-          continue;
-        }
+          if (
+            !token.token ||
+            token.token === '' ||
+            token.token === zeroAddress ||
+            token.token === ethAddress
+          ) {
+            continue;
+          }
 
-        // If this token will use permit, skip approval but collect permit signature
-        const willUsePermit = shouldUsePermitRouter && permitSupport[tokenIdx];
+          if (!permitSupport[tokenIdx]) {
+            continue; // Skip tokens that don't support permit
+          }
 
-        if (willUsePermit) {
+          const tokenAddress = token.token as `0x${string}`;
+          const tokenKey = tokenAddress.toLowerCase();
+          
+          // Check if we already have a stored permit signature for this token
+          const storedPermit = permitSignaturesRef.current.get(tokenKey);
+          
+          if (storedPermit) {
+            console.log(
+              `✅ Reusing stored permit signature for ${token.symbol || tokenAddress}`
+            );
+            permitSignatures.push(storedPermit);
+            continue; // Skip to next token
+          }
+
           console.log(
-            `📝 Token ${token.token} supports permit - will use permitRouter`
+            `📝 Token ${tokenAddress} supports permit - collecting new signature for execution`
           );
 
           if (!walletClient) {
@@ -751,7 +1275,7 @@ export const TxOptions = () => {
             // Get token decimals to calculate the amount
             const decimals = await publicClient.readContract({
               abi: erc20Abi,
-              address: token.token as `0x${string}`,
+              address: tokenAddress,
               functionName: 'decimals',
             });
 
@@ -765,14 +1289,17 @@ export const TxOptions = () => {
             // Calculate deadline (1 hour from now)
             const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
 
+            // Check if transaction was aborted before requesting permit signature
+            checkAborted();
+
             toast.info(
-              `Requesting permit signature for ${token.symbol || token.token}...`,
+              `Requesting permit signature for ${token.symbol || tokenAddress}...`,
               { duration: 3000 }
             );
 
             // Generate permit signature
             const permitData = await generatePermitSignature(
-              token.token as `0x${string}`,
+              tokenAddress,
               address,
               targetContractAddress,
               amount,
@@ -783,108 +1310,16 @@ export const TxOptions = () => {
 
             checkAborted();
 
-            console.log(`✅ Permit signature collected for ${token.symbol}`);
+            console.log(`✅ Permit signature collected for ${token.symbol || tokenAddress}`);
+            
+            // Store for potential reuse
+            permitSignaturesRef.current.set(tokenKey, permitData);
             permitSignatures.push(permitData);
-            continue;
           } catch (error) {
             console.error('❌ Failed to collect permit signature:', error);
-            const errorMessage =
-              error instanceof Error ? error.message : 'Unknown error';
-            toast.error(`Failed to get permit signature: ${errorMessage}`);
+            toast.error(`Failed to get permit signature!`);
             throw error;
           }
-        }
-
-        const [allowance, decimals, balance] = await publicClient.multicall({
-          contracts: [
-            {
-              abi: erc20Abi,
-              address: token.token as `0x${string}`,
-              functionName: 'allowance',
-              args: [address, targetContractAddress],
-            },
-            {
-              abi: erc20Abi,
-              address: token.token as `0x${string}`,
-              functionName: 'decimals',
-              args: [],
-            },
-            {
-              abi: erc20Abi,
-              address: token.token as `0x${string}`,
-              functionName: 'balanceOf',
-              args: [address],
-            },
-          ],
-          allowFailure: false,
-        });
-
-        checkAborted();
-
-        const needed = parseUnits(
-          token.balance.toString().replace(',', '.'),
-          decimals
-        );
-
-        if (allowance >= needed) {
-          console.log(
-            `✅ Sufficient allowance for ${token.symbol} (${token.token}), needed: ${needed}, allowance: ${allowance}`
-          );
-          continue;
-        }
-
-        if (safe && safeInfo) {
-          const approvalTx = {
-            to: token.token as `0x${string}`,
-            data: encodeFunctionData({
-              abi: erc20Abi,
-              functionName: 'approve',
-              args: [targetContractAddress, needed],
-            }),
-            value: 0n,
-          };
-
-          await safe.txs.send({ txs: [approvalTx] });
-          checkAborted();
-
-          toast.success('Approval sent to Safe for signing!', {
-            duration: 7_000,
-            position: 'top-center',
-            closeButton: true,
-            action: {
-              label: 'View in Safe',
-              onClick: () =>
-                window.open(
-                  `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
-                  '_blank',
-                  'noopener,noreferrer'
-                ),
-            },
-          });
-        } else {
-          const canIncrease = balance >= needed;
-          const amountToApprove = canIncrease ? needed + 1n : balance;
-
-          const hash = await writeContractAsync({
-            abi: erc20Abi,
-            address: token.token as `0x${string}`,
-            functionName: 'approve',
-            args: [targetContractAddress, amountToApprove],
-          });
-
-          checkAborted();
-
-          const receipt = await publicClient.waitForTransactionReceipt({
-            hash,
-          });
-
-          checkAborted();
-
-          if (receipt.status === 'reverted') {
-            throw new Error('Approval transaction reverted');
-          }
-
-          resetCheckState();
         }
       }
 
@@ -892,10 +1327,7 @@ export const TxOptions = () => {
 
       let hash: `0x${string}` = '0x';
 
-      console.log('MODE USAGE:', mode, {
-        shouldUseApproveRouter,
-        shouldUsePermitRouter,
-      });
+      console.log('MODE USAGE:', mode, diffs);
 
       if (safe && safeInfo) {
         const mainTx = {
@@ -1035,7 +1467,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else if (shouldUsePermitRouter) {
-              console.log({diffs})
 
               hash = await writeContractAsync({
                 abi: targetContract.abi,
@@ -1053,6 +1484,7 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
+
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
@@ -1163,9 +1595,7 @@ export const TxOptions = () => {
         console.log('🛑 Transaction was aborted by user');
         toast.info('Transaction cancelled');
       } else {
-        const errorMessage =
-          error instanceof Error ? error.message : 'Unknown error';
-        toast.error(`Transaction failed: ${errorMessage}`);
+        toast.error(`Transaction failed!`);
       }
 
       closeModal();
@@ -1245,21 +1675,6 @@ export const TxOptions = () => {
               onBlur={handleBlur}
               placeholder="Slippage"
             />
-            <div className="flex items-center space-x-2 pt-2">
-              <Checkbox
-                id="use-permit-router"
-                checked={usePermitRouter}
-                onCheckedChange={(checked: boolean) => 
-                  setUsePermitRouter(checked === true)
-                }
-              />
-              <Label
-                htmlFor="use-permit-router"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Use Permit Router (gasless approvals via EIP-2612 signatures)
-              </Label>
-            </div>
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>
@@ -1352,39 +1767,31 @@ export const TxOptions = () => {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
-              {checks.approvals
-                .filter((check) => check.token != '')
+              {checks.diffs
+                .filter((check) => check.token != '' && check.balance < 0)
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    - {check.balance.toFixed(6)} {check.symbol}
+                    - {formatter.format(Math.abs(check.balance))} {check.symbol}
                   </p>
                 ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
-              {checks.withdrawals
-                .filter((check) => check.token != '')
+              {checks.diffs
+                .filter((check) => check.token != '' && check.balance > 0)
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    + {check.balance.toFixed(6)} {check.symbol}
+                    + {formatter.format(check.balance)} {check.symbol}
                   </p>
                 ))}
             </div>
-            <div className="flex items-center space-x-2 pt-2">
-              <Checkbox
-                id="use-permit-router-simple"
-                checked={usePermitRouter}
-                onCheckedChange={(checked: boolean) => 
-                  setUsePermitRouter(checked === true)
-                }
-              />
-              <Label
-                htmlFor="use-permit-router-simple"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Use Permit Router (gasless approvals)
-              </Label>
-            </div>
+          </div>
+        )}
+
+        {loadingStep && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{loadingStep}</span>
           </div>
         )}
 
@@ -1398,9 +1805,12 @@ export const TxOptions = () => {
           >
             Close
           </Button>
-          <Button onClick={handleSave} disabled={isLoading}>
+          <Button 
+            onClick={handleSave} 
+            disabled={isLoading || !isSimulationComplete}
+          >
             {isLoading && <Loader2 className="animate-spin" />}{' '}
-            {isLoading ? 'Saving...' : 'Save'}
+            {isLoading ? 'Saving...' : !isSimulationComplete ? 'Preparing...' : 'Save'}
           </Button>
         </DialogFooter>
       </DialogContent>
