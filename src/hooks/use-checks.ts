@@ -1,4 +1,4 @@
-import { create } from "zustand";
+import { create } from 'zustand';
 
 export type Check = {
   token: string;
@@ -9,8 +9,8 @@ export type Check = {
 };
 
 export enum EMode {
-  "diifs" = "diifs",
-  "pre/post" = "pre/post",
+  'diifs' = 'diffs',
+  'pre/post' = 'pre/post',
 }
 
 export type UseChecks = {
@@ -80,9 +80,9 @@ export const useChecks = create<UseChecks>((set) => ({
         diffs: [
           ...state.checks.diffs,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -111,9 +111,9 @@ export const useChecks = create<UseChecks>((set) => ({
         approvals: [
           ...state.checks.approvals,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -124,7 +124,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         approvals: state.checks.approvals.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
@@ -144,9 +144,9 @@ export const useChecks = create<UseChecks>((set) => ({
         withdrawals: [
           ...state.checks.withdrawals,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -157,7 +157,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         withdrawals: state.checks.withdrawals.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
@@ -178,9 +178,9 @@ export const useChecks = create<UseChecks>((set) => ({
         postTransfer: [
           ...state.checks.postTransfer,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -191,7 +191,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         postTransfer: state.checks.postTransfer.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
@@ -212,9 +212,9 @@ export const useChecks = create<UseChecks>((set) => ({
         preTransfer: [
           ...state.checks.preTransfer,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -225,7 +225,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         preTransfer: state.checks.preTransfer.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
