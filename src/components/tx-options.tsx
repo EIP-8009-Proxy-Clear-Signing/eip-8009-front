@@ -882,9 +882,11 @@ export const TxOptions = () => {
         });
       }
 
-      // Set approval check - use the ACTUAL approval amount we approved
-      // Not the simulation result, to avoid mismatch between approved and used amounts
-      const approvalBalance = formatBalance(approvalAmount, from?.token.decimals);
+      // Set approval check - use the value FROM MODIFIED SIMULATION
+      // This ensures UI consistency: everything shown to user comes from the same simulation
+      // The actual approval amount (approvalAmount) was used for simulation, but we show
+      // what the modified simulation will actually use
+      const approvalBalance = formatBalance(-from.value.diff, from?.token.decimals);
 
       changeApprovalCheck(0, {
         target: tx.to,
