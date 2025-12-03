@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 export type Check = {
   token: string;
-  balance: number;
+  balance: number | string; // Allow string to preserve precision for bigint values
   target: string;
   decimals?: number;
   symbol?: string;

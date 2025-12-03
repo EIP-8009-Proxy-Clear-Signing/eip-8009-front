@@ -1,5 +1,5 @@
 import { EMode, Check } from '@/hooks/use-checks';
-import { formatBalance, formatToken } from './utils';
+import { formatBalance, formatToken, formatBalancePrecise } from './utils';
 import { SimulationResult } from './simulation-utils';
 
 export interface PopulateFormParams {
@@ -90,13 +90,25 @@ export function populateFormChecks(params: PopulateFormParams): void {
     }
 
     case EMode['pre/post']: {
+      // For pre/post mode, proxyCallMeta checks ABSOLUTE final balance
+      // Calculate in bigint to avoid precision loss:
+      // minFinalBalance = pre + (diff * (100 - slippage) / 100)
+      const slippageMultiplier = BigInt(
+        Math.floor((1 - slippage / 100) * 10000)
+      );
+      const minExpectedGain = (to.value.diff * slippageMultiplier) / 10000n;
+      const minFinalBalanceBigInt = to.value.pre + minExpectedGain;
+
+      // Convert to string preserving full precision (no float conversion!)
+      const minFinalBalance = formatBalancePrecise(
+        minFinalBalanceBigInt,
+        to.token.decimals || 18
+      );
+
       changePostTransferCheck(0, {
         target: String(address),
         token: formatToken(to.token.symbol, to.token.address),
-        balance: formatBalance(
-          BigInt(Number(to.value.post || 0n) * (1 - slippage / 100)),
-          to.token.decimals
-        ),
+        balance: minFinalBalance, // Now a string with full precision
       });
 
       break;
