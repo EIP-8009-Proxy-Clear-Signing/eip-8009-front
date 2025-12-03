@@ -505,6 +505,7 @@ export const TxOptions = () => {
         }
         case EMode['pre/post']: {
           if (!checks.postTransfer.length) createPostTransferCheck();
+          if (checks.postTransfer.length < 2) createPostTransferCheck(); // Create second check for spent token
           break;
         }
       }

@@ -91,27 +91,41 @@ export function populateFormChecks(params: PopulateFormParams): void {
 
     case EMode['pre/post']: {
       // For pre/post mode, proxyCallMeta checks ABSOLUTE final balance
-      // Calculate in bigint to avoid precision loss:
-      // minFinalBalance = pre + (diff * (100 - slippage) / 100)
-      const slippageMultiplier = BigInt(
+      // We need to check both received and spent tokens
+
+      // 1. Check received token (to): min final balance = pre + (diff * (1 - slippage))
+      const toSlippageMultiplier = BigInt(
         Math.floor((1 - slippage / 100) * 10000)
       );
-      const minExpectedGain = (to.value.diff * slippageMultiplier) / 10000n;
-      const minFinalBalanceBigInt = to.value.pre + minExpectedGain;
-
-      // Convert to string preserving full precision (no float conversion!)
-      const minFinalBalance = formatBalancePrecise(
-        minFinalBalanceBigInt,
-        to.token.decimals || 18
-      );
+      const minExpectedGain = (to.value.diff * toSlippageMultiplier) / 10000n;
+      const minFinalBalanceTo = to.value.pre + minExpectedGain;
 
       changePostTransferCheck(0, {
         target: String(address),
         token: formatToken(to.token.symbol, to.token.address),
-        balance: minFinalBalance, // Now a string with full precision
+        balance: formatBalancePrecise(
+          minFinalBalanceTo,
+          to.token.decimals || 18
+        ),
       });
 
-      break;
+      // 2. Check spent token (from): max final balance = pre + (diff * (1 + slippage))
+      // Since diff is negative for spent tokens, this calculates the minimum remaining balance
+      const fromSlippageMultiplier = BigInt(
+        Math.floor((1 + slippage / 100) * 10000)
+      );
+      const maxExpectedLoss =
+        (from.value.diff * fromSlippageMultiplier) / 10000n;
+      const minFinalBalanceFrom = from.value.pre + maxExpectedLoss;
+
+      changePostTransferCheck(1, {
+        target: String(address),
+        token: formatToken(from.token.symbol, from.token.address),
+        balance: formatBalancePrecise(
+          minFinalBalanceFrom,
+          from.token.decimals || 18
+        ),
+      });
     }
   }
 }

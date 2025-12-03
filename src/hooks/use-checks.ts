@@ -47,6 +47,7 @@ export type UseChecks = {
 
 export const MIN_SLIPPAGE = 0;
 export const MAX_SLIPPAGE = 30;
+export const DEFAULT_SLIPPAGE = 0.1; // 0.5% is a reasonable default for DEX swaps
 
 export const useChecks = create<UseChecks>((set) => ({
   mode: EMode.diifs,
@@ -57,7 +58,7 @@ export const useChecks = create<UseChecks>((set) => ({
     withdrawals: [],
     diffs: [],
   },
-  slippage: 0.0001,
+  slippage: DEFAULT_SLIPPAGE,
   setMode: (mode: EMode) =>
     set(() => ({
       mode,
