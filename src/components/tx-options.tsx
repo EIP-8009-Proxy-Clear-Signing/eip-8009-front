@@ -700,10 +700,19 @@ export const TxOptions = () => {
         withdrawalsToUse = [];
       }
 
-      const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
+      // const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
+      //   await Promise.all([
+      //     transformToMetadata(checks.postTransfer, publicClient),
+      //     transformToMetadata(checks.preTransfer, publicClient),
+
+      //     transformToMetadata(checks.diffs, publicClient),
+      //     transformToMetadata(approvalsToUse, publicClient),
+      //     transformToMetadata(withdrawalsToUse, publicClient),
+      //   ]);
+
+      const [postTransfers, diffs, approvals, withdrawals] =
         await Promise.all([
           transformToMetadata(checks.postTransfer, publicClient),
-          transformToMetadata(checks.preTransfer, publicClient),
 
           transformToMetadata(checks.diffs, publicClient),
           transformToMetadata(approvalsToUse, publicClient),
@@ -717,10 +726,10 @@ export const TxOptions = () => {
         useTransfer: isUniversalRouter && !hasWrapEthCommand,
       }));
 
-      const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
-        balance: preTransfer.balance,
-        useTransfer: false,
-      }));
+      // const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
+      //   balance: preTransfer.balance,
+      //   useTransfer: false,
+      // }));
 
       // Check which tokens support permit (EIP-2612)
       const permitSupport = await Promise.all(
@@ -940,7 +949,7 @@ export const TxOptions = () => {
                     args: [
                       proxy.address,
                       postTransfers,
-                      preTransfersWithFlags,
+                      approvalsWithFlags,
                       tx.to,
                       data,
                       withdrawals.map((w) => w.balance),
@@ -953,7 +962,7 @@ export const TxOptions = () => {
                     args: [
                       proxy.address,
                       postTransfers,
-                      preTransfersWithFlags,
+                      approvalsWithFlags,
                       permitSignatures,
                       tx.to,
                       data,
@@ -966,7 +975,7 @@ export const TxOptions = () => {
                     functionName: 'proxyCallMeta',
                     args: [
                       postTransfers,
-                      preTransfersWithFlags,
+                      approvalsWithFlags,
                       tx.to,
                       data,
                       withdrawals.map((w) => w.balance),
@@ -1068,7 +1077,7 @@ export const TxOptions = () => {
                 args: [
                   proxy.address,
                   postTransfers,
-                  preTransfersWithFlags,
+                  approvalsWithFlags,
                   tx.to,
                   data,
                   withdrawals.map((w) => w.balance),
@@ -1083,7 +1092,7 @@ export const TxOptions = () => {
                 args: [
                   proxy.address,
                   postTransfers,
-                  preTransfersWithFlags,
+                  approvalsWithFlags,
                   permitSignatures as readonly PermitData[] & never[],
                   tx.to,
                   data,
@@ -1098,7 +1107,7 @@ export const TxOptions = () => {
                 functionName: 'proxyCallMeta',
                 args: [
                   postTransfers,
-                  preTransfersWithFlags,
+                  approvalsWithFlags,
                   tx.to,
                   data,
                   withdrawals.map((w) => w.balance),
@@ -1185,6 +1194,8 @@ export const TxOptions = () => {
   }, [inputSlippage, slippage, setSlippage, clamp]);
 
   if (!modalOpen) return null;
+
+  console.log({checks})
 
   return (
     <Dialog
@@ -1324,20 +1335,20 @@ export const TxOptions = () => {
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
               {checks.diffs
-                .filter((check) => check.token != '' && check.balance < 0)
+                .filter((check) => check.token != '' && Number(check.balance) < 0)
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    - {formatter.format(Math.abs(check.balance))} {check.symbol}
+                    - {formatter.format(Math.abs(Number(check.balance)))} {check.symbol}
                   </p>
                 ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
               {checks.diffs
-                .filter((check) => check.token != '' && check.balance > 0)
+                .filter((check) => check.token != '' && Number(check.balance) > 0)
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    + {formatter.format(check.balance)} {check.symbol}
+                    + {formatter.format(Number(check.balance))} {check.symbol}
                   </p>
                 ))}
             </div>
