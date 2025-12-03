@@ -1217,8 +1217,8 @@ export const TxOptions = () => {
                 ? `Call to ${shortenAddress(tx.to)}`
                 : 'Setup your tx options here.'}
             </span>
-            <Button variant="outline" onClick={toggleAdvanced}>
-              {isAdvanced ? 'Hide advanced' : 'Show advanced'}
+            <Button variant="outline" onClick={toggleAdvanced} disabled={isLoading || !isSimulationComplete}>
+              {isLoading ? 'Saving...' : !isSimulationComplete ? 'Preparing...' : isAdvanced ? 'Hide advanced' : 'Show advanced'}
             </Button>
           </DialogDescription>
         </DialogHeader>
