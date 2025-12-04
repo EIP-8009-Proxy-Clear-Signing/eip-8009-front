@@ -1,16 +1,16 @@
-import { create } from "zustand";
+import { create } from 'zustand';
 
 export type Check = {
   token: string;
-  balance: number;
+  balance: number | string; // Allow string to preserve precision for bigint values
   target: string;
   decimals?: number;
   symbol?: string;
 };
 
 export enum EMode {
-  "diifs" = "diifs",
-  "pre/post" = "pre/post",
+  'diifs' = 'diffs',
+  'pre/post' = 'pre/post',
 }
 
 export type UseChecks = {
@@ -23,6 +23,8 @@ export type UseChecks = {
   };
   slippage: number;
   setSlippage: (slippage: number) => void;
+  slippagePrePost: number;
+  setSlippagePrePost: (slippage: number) => void;
   createDiffsCheck: () => void;
   changeDiffsCheck: (index: number, check: Check) => void;
   removeDiffsCheck: (index: number) => void;
@@ -47,6 +49,8 @@ export type UseChecks = {
 
 export const MIN_SLIPPAGE = 0;
 export const MAX_SLIPPAGE = 30;
+export const DEFAULT_SLIPPAGE = 0.001;
+export const DEFAULT_SLIPPAGE_PREPOST = 1.0;
 
 export const useChecks = create<UseChecks>((set) => ({
   mode: EMode.diifs,
@@ -57,7 +61,8 @@ export const useChecks = create<UseChecks>((set) => ({
     withdrawals: [],
     diffs: [],
   },
-  slippage: 0.0001,
+  slippage: DEFAULT_SLIPPAGE,
+  slippagePrePost: DEFAULT_SLIPPAGE_PREPOST,
   setMode: (mode: EMode) =>
     set(() => ({
       mode,
@@ -73,6 +78,17 @@ export const useChecks = create<UseChecks>((set) => ({
       }
     }
   },
+  setSlippagePrePost: (slippagePrePost) => {
+    if (slippagePrePost >= MIN_SLIPPAGE && MAX_SLIPPAGE >= slippagePrePost) {
+      return set(() => ({ slippagePrePost }));
+    } else {
+      if (slippagePrePost < MIN_SLIPPAGE) {
+        return set(() => ({ slippagePrePost: MIN_SLIPPAGE }));
+      } else if (MAX_SLIPPAGE < slippagePrePost) {
+        return set(() => ({ slippagePrePost: MAX_SLIPPAGE }));
+      }
+    }
+  },
   createDiffsCheck: () => {
     set((state) => ({
       checks: {
@@ -80,9 +96,9 @@ export const useChecks = create<UseChecks>((set) => ({
         diffs: [
           ...state.checks.diffs,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -111,9 +127,9 @@ export const useChecks = create<UseChecks>((set) => ({
         approvals: [
           ...state.checks.approvals,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -124,7 +140,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         approvals: state.checks.approvals.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
@@ -144,9 +160,9 @@ export const useChecks = create<UseChecks>((set) => ({
         withdrawals: [
           ...state.checks.withdrawals,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -157,7 +173,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         withdrawals: state.checks.withdrawals.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
@@ -178,9 +194,9 @@ export const useChecks = create<UseChecks>((set) => ({
         postTransfer: [
           ...state.checks.postTransfer,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -191,7 +207,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         postTransfer: state.checks.postTransfer.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));
@@ -212,9 +228,9 @@ export const useChecks = create<UseChecks>((set) => ({
         preTransfer: [
           ...state.checks.preTransfer,
           {
-            token: "",
+            token: '',
             balance: 0,
-            target: "",
+            target: '',
           },
         ],
       },
@@ -225,7 +241,7 @@ export const useChecks = create<UseChecks>((set) => ({
       checks: {
         ...state.checks,
         preTransfer: state.checks.preTransfer.map((c, i) =>
-          i === index ? check : c,
+          i === index ? check : c
         ),
       },
     }));

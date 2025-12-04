@@ -18,6 +18,7 @@ import {
   MIN_SLIPPAGE,
   useChecks,
 } from '@/hooks/use-checks';
+import { ChangeEvent, useCallback, useRef, useState, useEffect } from 'react';
 import {
   Accordion,
   AccordionContent,
@@ -44,10 +45,7 @@ import {
   zeroAddress,
 } from 'viem';
 import { whatsabi } from '@shazow/whatsabi';
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
-  formatBalance,
-  formatToken,
   getEnumValues,
   getExplorerUrl,
   shortenAddress,
@@ -69,6 +67,20 @@ import {
   generatePermitSignature,
 } from '@/lib/permit-utils';
 import { Label } from './ui/label';
+import {
+  simulateOriginalTransaction,
+  simulateModifiedTransaction,
+  validateSimulationResult,
+  extractAssetChanges,
+} from '@/lib/simulation-utils';
+import {
+  determineApprovalAmount,
+  handleApprovalFlow,
+} from '@/lib/approval-utils';
+import { checkSufficientBalance } from '@/lib/balance-utils';
+import { getTokenMetadata } from '@/lib/token-utils';
+import { populateFormChecks } from '@/lib/form-utils';
+import { buildSimulationData } from '@/lib/simulation-data-builder';
 
 const formatter = new Intl.NumberFormat('en-US', {
   style: 'decimal',
@@ -165,7 +177,9 @@ const transformToMetadata = async (
   checks: Check[],
   publicClient: PublicClient
 ) => {
-  const filteredChecks = checks.filter((check) => check.token !== zeroAddress && check.token !== "");
+  const filteredChecks = checks.filter(
+    (check) => check.token !== zeroAddress && check.token !== ''
+  );
   const ether = checks.find((check) => check.token === zeroAddress);
 
   const checksSymbolRequests = filteredChecks.map(({ token }) => ({
@@ -249,6 +263,8 @@ export const TxOptions = () => {
     checks,
     slippage,
     setSlippage,
+    slippagePrePost,
+    setSlippagePrePost,
     createApprovalCheck,
     changeApprovalCheck,
     removeApprovalCheck,
@@ -266,7 +282,15 @@ export const TxOptions = () => {
     createPostTransferCheck,
   } = useChecks();
 
-  const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
+  // Use appropriate slippage based on mode
+  const activeSlippage =
+    mode === EMode['pre/post'] ? slippagePrePost : slippage;
+  const setActiveSlippage =
+    mode === EMode['pre/post'] ? setSlippagePrePost : setSlippage;
+
+  const [inputSlippage, setInputSlippage] = useState<string>(
+    String(activeSlippage)
+  );
 
   const permitSignaturesRef = useRef<Map<string, PermitData>>(new Map());
 
@@ -303,7 +327,7 @@ export const TxOptions = () => {
   ]);
 
   const setDataToForm = useCallback(async () => {
-    if (!publicClient || tx === null || !address) {
+    if (!publicClient || tx === null || !address || !walletClient) {
       return;
     }
 
@@ -317,6 +341,7 @@ export const TxOptions = () => {
 
     const checkAborted = () => {
       if (abortController.signal.aborted) {
+        resetCheckState();
         throw new Error('Operation aborted - modal was closed');
       }
     };
@@ -324,82 +349,32 @@ export const TxOptions = () => {
     try {
       /**
        * SECURE TWO-PHASE SIMULATION FLOW:
-       * 
-       * Phase 1: Original Transaction (for security verification)
-       * - Simulate the ORIGINAL Uniswap transaction with real Permit2 signature
-       * - This may fail (expected) because Permit2 validation happens on-chain
-       * - If it succeeds, we get approximate asset changes for validation
-       * 
-       * Phase 2: Modified Transaction (for proxy execution)
-       * - Modify the calldata: remove Permit2 commands, adjust V4 payer flags
-       * - Simulate through our proxy routers (ApproveRouter/BasicProxy)
-       * - Get REAL asset changes that will be shown to the user
-       * - Populate the modal with accurate swap amounts
-       * 
-       * This two-phase approach provides:
-       * ✅ Security: User sees what Uniswap intended (Phase 1)
-       * ✅ Accuracy: User sees what will actually happen (Phase 2)
-       * ✅ Transparency: Both simulations are logged for verification
+       * Phase 1: Original Transaction → Extract token address & approval amount
+       * Phase 2: Modified Transaction → Get REAL asset changes for UI
        */
-      
+
       // Step 1: Get contract references
       const proxy = getContract('proxy', chainId);
       const uniswapRouter = getContract('uniswapRouter', chainId);
       const approveRouter = getContract('proxyApproveRouter', chainId);
+      const permitRouter = getContract('proxyPermitRouter', chainId);
 
       const isUniversalRouter = isUniversalRouterTransaction(
         tx.to,
         uniswapRouter.address
       );
 
-      // Step 2: Try to simulate ORIGINAL transaction to get approximate changes
+      // Step 2: Simulate ORIGINAL transaction
       setLoadingStep('Simulating original transaction...');
-      console.log('🔍 Step 1: Simulating ORIGINAL transaction for approximate changes...');
-      let originalSimRes;
-      let hasOriginalSimulation = false;
+      const { success: hasOriginalSimulation, result: originalSimRes } =
+        await simulateOriginalTransaction({
+          publicClient,
+          address,
+          tx,
+        });
 
-      // Retry logic for original simulation (may fail due to network issues)
-      let originalSimRetries = 100;
-      while (originalSimRetries > 0 && !hasOriginalSimulation) {
-        try {
-          originalSimRes = await publicClient.simulateCalls({
-            traceAssetChanges: true,
-            account: address,
-            calls: [
-              {
-                to: tx.to as `0x${string}`,
-                data: tx.data as `0x${string}`,
-                value: BigInt(tx.value || 0),
-              },
-            ],
-          });
-
-          if (originalSimRes.results[0].status === 'success') {
-            console.log('✅ Original simulation successful:', originalSimRes.assetChanges);
-            hasOriginalSimulation = true;
-          } else {
-            console.warn('⚠️ Original simulation returned failure status');
-            originalSimRetries -= 1;
-            if (originalSimRetries > 0) {
-              console.log(`🔄 Retrying original simulation (${originalSimRetries} attempts left)...`);
-              await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
-            }
-          }
-        } catch (error) {
-          originalSimRetries -= 1;
-          if (originalSimRetries > 0) {
-            console.warn(`⚠️ Original simulation failed, retrying (${originalSimRetries} attempts left)...`);
-            await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
-          } else {
-            console.warn('⚠️ Original simulation failed after all retries (expected for Permit2):', error);
-            console.log('💡 Will use modified transaction simulation for all values');
-          }
-        }
-      }
-
-      // Step 3: Modify transaction calldata for proxy execution
+      // Step 3: Modify transaction calldata
       setLoadingStep('Modifying transaction calldata...');
-      console.log('🔍 Step 2: Modifying transaction calldata for proxy...');
       let modifiedData = tx.data;
 
       if (isUniversalRouter) {
@@ -409,247 +384,65 @@ export const TxOptions = () => {
           address
         );
         modifiedData = modified ?? tx.data;
-        console.log('✅ Calldata modified for Universal Router');
       }
 
-      // Step 4: Extract swap info to determine router and build approvals
+      // Step 4: Extract swap info and determine approval amount
       const swapInfo = isUniversalRouter
         ? extractSwapInfo(tx.data, uniswapRouter.abi)
         : null;
 
-      console.log('🔍 Swap info:', swapInfo);
-
-      // Step 5: Build approximate diffs and approvals from original simulation if available
-      let approvalAmount = 0n;
-      let inputTokenAddress: `0x${string}` | null = null;
-
-      if (hasOriginalSimulation && originalSimRes) {
-        // Get input token (negative diff) from original simulation
-        // Skip native ETH as it doesn't need approval
-        const inputChange = originalSimRes.assetChanges.find(
-          (change) => 
-            change.value.diff < 0n && 
-            change.token.address !== ethAddress &&
-            change.token.address !== zeroAddress
-        );
-        if (inputChange) {
-          inputTokenAddress = inputChange.token.address as `0x${string}`;
-          // Add 10% buffer to approval amount to account for slippage/rounding
-          const rawAmount = -inputChange.value.diff;
-          approvalAmount = rawAmount;
-          // approvalAmount = BigInt(Math.ceil(Number(rawAmount) * (1 + slippage / 100)));
-          console.log('📊 From original simulation:', {
-            token: inputTokenAddress,
-            amount: approvalAmount.toString(),
-            rawAmount: rawAmount.toString(),
-            buffer: '10%',
-          });
-        }
-      } else if (swapInfo?.inputToken && swapInfo.inputToken !== zeroAddress && swapInfo.inputToken !== ethAddress) {
-        // Fallback to swap info
-        inputTokenAddress = swapInfo.inputToken as `0x${string}`;
-        
-        if (swapInfo.inputAmount > 0n) {
-          approvalAmount = swapInfo.inputAmount;
-        } else {
-          // V4 or case where we don't have amount - check user's token balance
-          try {
-            const balance = await publicClient.readContract({
-              address: inputTokenAddress,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [address],
-            });
-            // Use the user's full balance as approval amount (they probably want to swap it all)
-            approvalAmount = balance;
-            console.log('📊 Using user balance for approval:', {
-              token: inputTokenAddress,
-              balance: balance.toString(),
-            });
-          } catch {
-            // If we can't get balance, use a reasonably large number (1 trillion tokens with 18 decimals)
-            approvalAmount = BigInt('1000000000000000000000000'); // 1M tokens
-            console.warn('⚠️ Could not get token balance, using default approval amount');
-          }
-        }
-        
-        console.log('📊 From swap info (fallback):', {
-          token: inputTokenAddress,
-          amount: approvalAmount.toString(),
+      const { approvalAmount, inputTokenAddress } =
+        await determineApprovalAmount({
+          hasOriginalSimulation,
+          originalSimRes,
+          swapInfo,
+          publicClient,
+          address,
         });
-      }
 
-      // Step 6: Determine which router to use and check/request approvals BEFORE simulation
+      // Step 5: Determine router and handle approvals/permits
+      const isTokenSwap =
+        inputTokenAddress &&
+        inputTokenAddress !== zeroAddress &&
+        inputTokenAddress !== ethAddress;
+
       let shouldUseApproveRouter = false;
       let willUsePermitForExecution = false;
       let permitSignature: PermitData | null = null;
-      const isTokenSwap =
-        inputTokenAddress && inputTokenAddress !== zeroAddress && inputTokenAddress !== ethAddress;
 
       if (isTokenSwap) {
         shouldUseApproveRouter = true;
-        console.log('📝 Token swap detected - will use ApproveRouter/PermitRouter');
-      } else {
-        console.log('📝 No token approval needed (native ETH or no input token) - will use BasicProxy');
       }
 
       const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
-      const permitRouter = getContract('proxyPermitRouter', chainId);
 
-      // Step 6.5: Check and request approvals/permits BEFORE simulation
-      if (isTokenSwap && inputTokenAddress && !walletClient) {
-        console.error('❌ Wallet client required for token approvals');
-        toast.error('Please connect your wallet to continue');
-        return;
-      }
-
-      if (isTokenSwap && inputTokenAddress && walletClient) {
+      // Step 6: Handle approval/permit flow
+      if (isTokenSwap && inputTokenAddress) {
         setLoadingStep('Checking token approvals...');
-        console.log('🔍 Checking token approval for simulation...');
-        
-        // Check if operation was aborted
-        checkAborted();
-        
-        // Check current allowance
-        const [currentAllowance, tokenSymbol] = await publicClient.multicall({
-          contracts: [
-            {
-              abi: erc20Abi,
-              address: inputTokenAddress,
-              functionName: 'allowance',
-              args: [address, targetContract.address],
-            },
-            {
-              abi: erc20Abi,
-              address: inputTokenAddress,
-              functionName: 'symbol',
-            },
-          ],
-          allowFailure: false,
+
+        const approvalResult = await handleApprovalFlow({
+          inputTokenAddress,
+          approvalAmount,
+          targetContract: targetContract as { address: `0x${string}` },
+          permitRouter: permitRouter as { address: `0x${string}` },
+          publicClient,
+          walletClient,
+          address,
+          usePermitRouter,
+          permitSignaturesRef,
+          checkAborted,
         });
 
-        console.log('📊 Current allowance:', {
-          token: tokenSymbol,
-          current: currentAllowance.toString(),
-          needed: approvalAmount.toString(),
-        });
-
-        // Check if approval is needed
-        if (currentAllowance < approvalAmount) {
-          console.log('⚠️ Insufficient allowance - requesting approval...');
-          
-          // Check if token supports permit (EIP-2612)
-          const tokenSupportsPermit = await supportsPermit(inputTokenAddress, publicClient);
-          
-          if (usePermitRouter && tokenSupportsPermit) {
-            // Check if we already have a stored permit signature for this token
-            const tokenKey = inputTokenAddress.toLowerCase();
-            const storedPermit = permitSignaturesRef.current.get(tokenKey);
-            
-            if (storedPermit) {
-              console.log(`✅ Reusing stored permit signature for ${tokenSymbol} (${inputTokenAddress})`);
-              permitSignature = storedPermit;
-              willUsePermitForExecution = true;
-            } else {
-              setLoadingStep(`Requesting permit signature for ${tokenSymbol}...`);
-              console.log(`📝 Token ${tokenSymbol} supports permit - will collect signature for simulation and execution`);
-              
-              // Check if operation was aborted before requesting permit
-              checkAborted();
-              
-              toast.info(`Requesting permit signature for ${tokenSymbol}...`, {
-                duration: 3000,
-              });
-
-              try {
-                const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour
-                
-                // Generate permit signature - will be used for both simulation and execution
-                permitSignature = await generatePermitSignature(
-                  inputTokenAddress,
-                  address,
-                  permitRouter.address, // Permit to PermitRouter
-                  approvalAmount,
-                  deadline,
-                  publicClient,
-                  walletClient
-                );
-                
-                // Check if operation was aborted during permit signing
-                checkAborted();
-                
-                // Store for reuse in subsequent calls
-                permitSignaturesRef.current.set(tokenKey, permitSignature);
-                
-                willUsePermitForExecution = true;
-                console.log(`✅ Permit signature collected for ${tokenSymbol} - will use for simulation and execution`);
-                toast.success(`Permit granted for ${tokenSymbol}`);
-              } catch (error) {
-                console.error('❌ Permit signature failed:', error);
-                toast.error('Failed to get permit signature - please try standard approval');
-                return;
-              }
-            }
-          } else {
-            // Request standard approval
-            setLoadingStep(`Requesting approval for ${tokenSymbol}...`);
-            console.log('📝 Requesting standard approval...');
-            
-            // Check if operation was aborted before requesting approval
-            checkAborted();
-            
-            toast.info(`Requesting approval for ${tokenSymbol}...`, {
-              duration: 3000,
-            });
-
-            try {
-              const hash = await walletClient.writeContract({
-                abi: erc20Abi,
-                address: inputTokenAddress,
-                functionName: 'approve',
-                args: [targetContract.address, approvalAmount],
-              });
-
-              // Check if operation was aborted during approval transaction
-              checkAborted();
-
-              console.log('⏳ Waiting for approval transaction:', hash);
-              toast.info('Waiting for approval transaction...', {
-                duration: 5000,
-              });
-
-              const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-              // Check if operation was aborted while waiting for confirmation
-              checkAborted();
-
-              if (receipt.status === 'reverted') {
-                throw new Error('Approval transaction reverted');
-              }
-
-              console.log('✅ Approval confirmed - proceeding with simulation');
-              toast.success(`${tokenSymbol} approved successfully!`);
-            } catch (error) {
-              console.error('❌ Approval failed:', error);
-              toast.error(`Approval failed!`);
-              return;
-            }
-          }
-        } else {
-          console.log('✅ Sufficient allowance already exists');
-        }
+        permitSignature = approvalResult.permitSignature;
+        willUsePermitForExecution = approvalResult.willUsePermit;
       }
 
-      // Step 7: Build simulation call for MODIFIED transaction through proxy
+      // Step 7: Build simulation call for MODIFIED transaction
       setLoadingStep('Simulating modified transaction through proxy...');
-      console.log('🔍 Step 3: Simulating MODIFIED transaction through proxy...');
+      const simulationContract = willUsePermitForExecution
+        ? permitRouter
+        : targetContract;
 
-      // Determine which contract to use for simulation
-      // If we have a permit signature, use PermitRouter for both simulation and execution
-      // Otherwise use the target contract (ApproveRouter with approval already done)
-      const simulationContract = willUsePermitForExecution ? permitRouter : targetContract;
-
-      let simulationData: `0x${string}`;
       const approvals =
         isTokenSwap && inputTokenAddress
           ? [
@@ -664,337 +457,137 @@ export const TxOptions = () => {
             ]
           : [];
 
-      console.log('📋 Simulation config:', {
+      const simulationData = buildSimulationData({
+        willUsePermit: willUsePermitForExecution,
         shouldUseApproveRouter,
-        willUsePermitForExecution,
-        hasPermitSignature: !!permitSignature,
-        simulationContract: simulationContract.address,
-        executionContract: willUsePermitForExecution ? permitRouter.address : targetContract.address,
-        approvals: approvals.map(a => ({
-          target: a.balance.target,
-          token: a.balance.token,
-          balance: a.balance.balance.toString(),
-          useTransfer: a.useTransfer,
-        })),
+        permitSignature,
+        proxy: proxy as { address: string; abi: Abi },
+        permitRouter: permitRouter as { abi: Abi },
+        targetContract: targetContract as { abi: Abi },
+        approvals,
         txTo: tx.to,
-        modifiedDataLength: modifiedData.length,
+        modifiedData,
       });
 
-      if (willUsePermitForExecution && permitSignature) {
-        // Use PermitRouter for simulation with the permit signature
-        simulationData = encodeFunctionData({
-          abi: permitRouter.abi,
-          functionName: 'permitProxyCallDiffsWithMeta',
-          args: [
-            proxy.address,
-            [],
-            approvals,
-            [permitSignature], // Pass the permit signature
-            tx.to,
-            modifiedData,
-            [],
-          ],
-        }) as `0x${string}`;
-      } else if (shouldUseApproveRouter && approvals.length > 0) {
-        // Use ApproveRouter for simulation since we have approvals now
-        simulationData = encodeFunctionData({
-          abi: targetContract.abi,
-          functionName: 'approveProxyCallDiffsWithMeta',
-          args: [
-            proxy.address,
-            [],
-            approvals,
-            tx.to,
-            modifiedData,
-            [],
-          ],
-        }) as `0x${string}`;
-      } else {
-        simulationData = encodeFunctionData({
-          abi: proxy.abi,
-          functionName: 'proxyCallDiffsMeta',
-          args: [
-            [], // Empty diffs
-            approvals,
-            tx.to,
-            modifiedData,
-            [],
-          ],
-        }) as `0x${string}`;
-      }
-
-      // Step 8: Simulate the MODIFIED transaction through proxy (with actual approvals in place)
-      let retries = 100;
-      let simRes;
-
-      while (retries > 0) {
-        try {
-          simRes = await publicClient.simulateCalls({
-            traceAssetChanges: true,
-            account: address,
-            calls: [
-              {
-                to: simulationContract.address as `0x${string}`, // Use appropriate contract for simulation
-                data: simulationData,
-                value: BigInt(tx.value || 0),
-              },
-            ],
-          });
-
-          break;
-        } catch (error) {
-          console.warn('⚠️ Proxy simulation failed:', error);
-          console.log(
-            '💡 Please manually configure approval and withdrawal checks'
-          );
-
-          retries -= 1;
-        }
-      }
+      // Step 8: Simulate MODIFIED transaction
+      const simRes = await simulateModifiedTransaction({
+        publicClient,
+        address,
+        simulationContract: simulationContract as { address: string },
+        simulationData,
+        txValue: BigInt(tx.value || 0),
+      });
 
       if (!simRes) {
-        console.error('❌ Proxy simulation failed after all retries');
-        return;
-      }
-
-      console.log('✅ Proxy simulation successful - showing real values in modal', simRes);
-
-      // Check if simulation actually succeeded
-      if (simRes.results[0].status !== 'success') {
-        console.error('❌ Proxy simulation returned failure status:', simRes.results[0]);
-        toast.error('Simulation failed - please check the transaction parameters');
-        return;
-      }
-
-      // Step 9: Populate form with real values from proxy simulation
-      const from = simRes.assetChanges.find((asset) => asset.value.diff < 0);
-      const to = simRes.assetChanges.find((asset) => asset.value.diff > 0);
-
-      console.log('📊 Asset changes for form:', { from, to });
-
-      if (!from || !to) {
-        console.error('❌ No asset changes detected in simulation');
-        console.log('Asset changes:', simRes.assetChanges);
-        toast.error('Could not detect token swap in simulation - please try again');
-        return;
-      }
-
-      // Detect if input is ETH
-      const isFromEth =
-        from?.token.address === zeroAddress ||
-        from?.token.address === ethAddress;
-
-      // Step 9.5: Check if user has sufficient balance for the transaction
-      // IMPORTANT: We need to check against the amount WITH slippage buffer,
-      // not just the raw diff, because that's what will actually be used
-      const rawAmount = -from.value.diff;
-      const requiredAmount = BigInt(
-        Math.ceil(Number(rawAmount) * (1 + slippage / 100))
-      );
-      
-      let userBalance: bigint;
-
-      if (isFromEth) {
-        // For ETH, get the user's ETH balance
-        userBalance = await publicClient.getBalance({ address });
-      } else {
-        // For ERC20 tokens, get the token balance
-        userBalance = await publicClient.readContract({
-          abi: erc20Abi,
-          address: from.token.address as `0x${string}`,
-          functionName: 'balanceOf',
-          args: [address],
-        });
-      }
-
-      console.log('💰 Balance check:', {
-        token: from.token.symbol,
-        rawAmount: rawAmount.toString(),
-        requiredWithSlippage: requiredAmount.toString(),
-        slippagePercent: slippage,
-        available: userBalance.toString(),
-        sufficient: userBalance >= requiredAmount,
-      });
-
-      if (userBalance < requiredAmount) {
-        const shortfall = requiredAmount - userBalance;
-        console.error('❌ Insufficient balance for transaction');
+        console.error('Proxy simulation failed');
         toast.error(
-          `Insufficient ${from.token.symbol} balance. You need ${formatBalance(requiredAmount, from.token.decimals)} (including ${slippage}% slippage buffer) but only have ${formatBalance(userBalance, from.token.decimals)}. Shortfall: ${formatBalance(shortfall, from.token.decimals)} ${from.token.symbol}`,
-          { duration: 10000 }
+          'Simulation failed - please check the transaction parameters'
         );
         return;
       }
 
-      // Create approval check if not exists
-      if (!checks.approvals.length) {
-        createApprovalCheck();
+      // Validate simulation
+      if (!validateSimulationResult(simRes)) {
+        toast.error(
+          'Simulation failed - please check the transaction parameters'
+        );
+        return;
       }
 
-      if (!checks.withdrawals.length) {
-        createWithdrawalCheck();
+      // Step 9: Extract asset changes
+      const { from, to } = extractAssetChanges(simRes);
+
+      if (!from || !to) {
+        console.error('No asset changes detected in simulation');
+        toast.error(
+          'Could not detect token swap in simulation - please try again'
+        );
+        return;
       }
 
-      // Create diff checks based on mode
-      switch (mode) {
-        case 'diifs': {
-          if (!checks.diffs.length) {
-            createDiffsCheck();
-          }
-          if (checks.diffs.length < 2) {
-            createDiffsCheck();
-          }
-          break;
-        }
+      // Step 10: Check user balance
+      const isFromEth =
+        from.token.address === zeroAddress || from.token.address === ethAddress;
 
-        case EMode['pre/post']: {
-          if (!checks.postTransfer.length) {
-            createPostTransferCheck();
-          }
-          break;
-        }
-      }
-
-      // Get token symbol and decimals for input token
-      let appSymbol = 'ETH';
-      let appDecimals = 18;
-
-      if (!isFromEth && from?.token?.address) {
-        // Check if operation was aborted before fetching metadata
-        checkAborted();
-        
-        [appSymbol, appDecimals] = await publicClient.multicall({
-          contracts: [
-            {
-              abi: erc20Abi,
-              address: from.token.address as `0x${string}`,
-              functionName: 'symbol' as const,
-              args: [],
-            },
-            {
-              abi: erc20Abi,
-              address: from.token.address as `0x${string}`,
-              functionName: 'decimals' as const,
-              args: [],
-            },
-          ],
-          allowFailure: false,
-        });
-      }
-
-      // Set approval check - use the value FROM MODIFIED SIMULATION
-      // This ensures UI consistency: everything shown to user comes from the same simulation
-      // The actual approval amount (approvalAmount) was used for simulation, but we show
-      // what the modified simulation will actually use
-      const approvalBalance = formatBalance(-from.value.diff, from?.token.decimals);
-
-      changeApprovalCheck(0, {
-        target: tx.to,
-        token: formatToken(from?.token.symbol, from?.token.address),
-        balance: approvalBalance,
-        symbol: appSymbol,
-        decimals: appDecimals,
+      const balanceCheck = await checkSufficientBalance({
+        fromToken: from.token,
+        fromValueDiff: from.value.diff,
+        slippage: activeSlippage,
+        publicClient,
+        address,
       });
 
-      // Get token symbol and decimals for output token
-      let withSymbol = 'ETH';
-      let withDecimals = 18;
-
-      if (
-        to?.token?.address &&
-        to.token.address !== zeroAddress &&
-        to.token.address !== ethAddress
-      ) {
-        // Check if operation was aborted before fetching metadata
-        checkAborted();
-        
-        [withSymbol, withDecimals] = await publicClient.multicall({
-          contracts: [
-            {
-              abi: erc20Abi,
-              address: to.token.address as `0x${string}`,
-              functionName: 'symbol' as const,
-              args: [],
-            },
-            {
-              abi: erc20Abi,
-              address: to.token.address as `0x${string}`,
-              functionName: 'decimals' as const,
-              args: [],
-            },
-          ],
-          allowFailure: false,
-        });
+      if (!balanceCheck.sufficient) {
+        return; // Error toast already shown by checkSufficientBalance
       }
 
-      // Set withdrawal check with slippage
-      changeWithdrawalCheck(0, {
-        target: String(address),
-        token: formatToken(to?.token.symbol, to?.token.address),
-        balance:
-          formatBalance(to?.value.diff, to?.token.decimals) *
-          (1 - slippage / 100),
-        symbol: withSymbol,
-        decimals: withDecimals,
-      });
+      // Step 11: Create checks if needed
+      if (!checks.approvals.length) createApprovalCheck();
+      if (!checks.withdrawals.length) createWithdrawalCheck();
 
-      // Set diff checks based on mode
       switch (mode) {
         case EMode.diifs: {
-          changeDiffsCheck(0, {
-            target: String(address),
-            token: formatToken(to?.token.symbol, to?.token.address),
-            balance:
-              formatBalance(to?.value.diff, to?.token.decimals) *
-              (1 - slippage / 100),
-          });
-
-          // Always add the input token to diffs (including ETH)
-          const inputBalance = -(
-            formatBalance(from?.value.diff, from?.token.decimals) *
-            (1 + slippage / 100)
-          );
-
-          changeDiffsCheck(1, {
-            target: String(address),
-            token: formatToken(from?.token.symbol, from?.token.address),
-            balance: inputBalance,
-          });
-
+          if (!checks.diffs.length) createDiffsCheck();
+          if (checks.diffs.length < 2) createDiffsCheck();
           break;
         }
-
         case EMode['pre/post']: {
-          changePostTransferCheck(0, {
-            target: String(address),
-            token: formatToken(to?.token.symbol, to?.token.address),
-            balance: formatBalance(
-              BigInt(Number(to?.value.post || 0n) * (1 - slippage / 100)),
-              to?.token.decimals
-            ),
-          });
-
+          // Create pre-transfer checks (for initial balances)
+          if (!checks.preTransfer.length) createPreTransferCheck();
+          if (checks.preTransfer.length < 2) createPreTransferCheck();
+          // Create post-transfer checks (for final balances with slippage)
+          if (!checks.postTransfer.length) createPostTransferCheck();
+          if (checks.postTransfer.length < 2) createPostTransferCheck();
           break;
         }
       }
+
+      // Step 12: Get token metadata
+      checkAborted();
+      const appMetadata = await getTokenMetadata(
+        from.token.address,
+        publicClient,
+        isFromEth
+      );
+      checkAborted();
+      const withMetadata = await getTokenMetadata(
+        to.token.address,
+        publicClient,
+        to.token.address === zeroAddress || to.token.address === ethAddress
+      );
+
+      // Step 13: Populate form checks
+      populateFormChecks({
+        from,
+        to,
+        txTo: tx.to,
+        address,
+        slippage: activeSlippage,
+        mode,
+        appSymbol: appMetadata.symbol,
+        appDecimals: appMetadata.decimals,
+        withSymbol: withMetadata.symbol,
+        withDecimals: withMetadata.decimals,
+        changeApprovalCheck,
+        changeWithdrawalCheck,
+        changeDiffsCheck,
+        changePreTransferCheck,
+        changePostTransferCheck,
+      });
 
       setLoadingStep('');
       setIsSimulationComplete(true);
-      console.log('✅ Form populated with real values from proxy simulation');
     } catch (error) {
       // Check if error is due to abort
       if (
         error instanceof Error &&
         error.message === 'Operation aborted - modal was closed'
       ) {
-        console.log('🛑 setDataToForm was aborted - modal was closed');
         return;
       }
-      
-      console.error('❌ Error in setDataToForm:', error);
-      toast.error(
-        `Failed to prepare transaction!`
-      );
+
+      console.error('Error in setDataToForm:', error);
+      toast.error('Failed to prepare transaction!');
       return;
     } finally {
       // Clear abort controller if operation completed
@@ -1007,21 +600,25 @@ export const TxOptions = () => {
     tx,
     address,
     chainId,
-    slippage,
+    activeSlippage,
     mode,
     walletClient,
     usePermitRouter,
+    resetCheckState,
     checks.approvals.length,
     checks.withdrawals.length,
     checks.diffs.length,
+    checks.preTransfer.length,
     checks.postTransfer.length,
     createApprovalCheck,
     createWithdrawalCheck,
     createDiffsCheck,
+    createPreTransferCheck,
     createPostTransferCheck,
     changeApprovalCheck,
     changeWithdrawalCheck,
     changeDiffsCheck,
+    changePreTransferCheck,
     changePostTransferCheck,
   ]);
 
@@ -1031,7 +628,6 @@ export const TxOptions = () => {
 
   useEffect(() => {
     if (!modalOpen && abortControllerRef.current) {
-      console.log('⚠️ Modal closed - aborting all operations');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
@@ -1146,11 +742,12 @@ export const TxOptions = () => {
         withdrawalsToUse = [];
       }
 
-      const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
+      // Transform metadata for contract calls
+      // Note: preTransfers are populated in UI but NOT sent to contract (UI display only)
+      const [postTransfers, , diffs, approvals, withdrawals] =
         await Promise.all([
           transformToMetadata(checks.postTransfer, publicClient),
-          transformToMetadata(checks.preTransfer, publicClient),
-
+          transformToMetadata(checks.preTransfer, publicClient), // For UI only
           transformToMetadata(checks.diffs, publicClient),
           transformToMetadata(approvalsToUse, publicClient),
           transformToMetadata(withdrawalsToUse, publicClient),
@@ -1163,10 +760,8 @@ export const TxOptions = () => {
         useTransfer: isUniversalRouter && !hasWrapEthCommand,
       }));
 
-      const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
-        balance: preTransfer.balance,
-        useTransfer: false,
-      }));
+      // Note: preTransfers are populated for UI display only
+      // They are NOT sent to the contract - only postTransfers are validated on-chain
 
       // Check which tokens support permit (EIP-2612)
       const permitSupport = await Promise.all(
@@ -1205,7 +800,8 @@ export const TxOptions = () => {
           return supports;
         });
 
-      const shouldUsePermitRouter = usePermitRouter && allTokensSupportPermit && !safe;
+      const shouldUsePermitRouter =
+        usePermitRouter && allTokensSupportPermit && !safe;
 
       const shouldUseApproveRouter =
         !shouldUsePermitRouter && approvalsWithFlags.some((a) => a.useTransfer);
@@ -1217,23 +813,11 @@ export const TxOptions = () => {
           ? permitRouter
           : proxy;
 
-      console.log('🔍 Router selection:', {
-        usePermitRouter,
-        shouldUseApproveRouter,
-        shouldUsePermitRouter,
-        allTokensSupportPermit,
-        targetContract: targetContract.address,
-        permitSupport,
-      });
-
       const targetContractAddress = targetContract.address as `0x${string}`;
       const value = tx.value ? BigInt(tx.value) : undefined;
 
-      // Store permit signatures for later use (only needed if using permit router)
       const permitSignatures: PermitData[] = [];
 
-      // Only collect permit signatures if using permit router
-      // Standard approvals were already handled in setDataToForm()
       if (shouldUsePermitRouter) {
         for (let tokenIdx = 0; tokenIdx < approvalsToUse.length; tokenIdx++) {
           const token = approvalsToUse[tokenIdx];
@@ -1253,20 +837,20 @@ export const TxOptions = () => {
 
           const tokenAddress = token.token as `0x${string}`;
           const tokenKey = tokenAddress.toLowerCase();
-          
+
           // Check if we already have a stored permit signature for this token
           const storedPermit = permitSignaturesRef.current.get(tokenKey);
-          
+
           if (storedPermit) {
             console.log(
-              `✅ Reusing stored permit signature for ${token.symbol || tokenAddress}`
+              `Reusing stored permit signature for ${token.symbol || tokenAddress}`
             );
             permitSignatures.push(storedPermit);
             continue; // Skip to next token
           }
 
           console.log(
-            `📝 Token ${tokenAddress} supports permit - collecting new signature for execution`
+            `Token ${tokenAddress} supports permit - collecting new signature for execution`
           );
 
           if (!walletClient) {
@@ -1312,14 +896,11 @@ export const TxOptions = () => {
 
             checkAborted();
 
-            console.log(`✅ Permit signature collected for ${token.symbol || tokenAddress}`);
-            
-            // Store for potential reuse
             permitSignaturesRef.current.set(tokenKey, permitData);
             permitSignatures.push(permitData);
           } catch (error) {
-            console.error('❌ Failed to collect permit signature:', error);
-            toast.error(`Failed to get permit signature!`);
+            console.error('Failed to collect permit signature:', error);
+            toast.error('Failed to get permit signature!');
             throw error;
           }
         }
@@ -1328,8 +909,6 @@ export const TxOptions = () => {
       checkAborted();
 
       let hash: `0x${string}` = '0x';
-
-      console.log('MODE USAGE:', mode, diffs);
 
       if (safe && safeInfo) {
         const mainTx = {
@@ -1386,7 +965,7 @@ export const TxOptions = () => {
                     args: [
                       proxy.address,
                       postTransfers,
-                      preTransfersWithFlags,
+                      approvalsWithFlags,
                       tx.to,
                       data,
                       withdrawals.map((w) => w.balance),
@@ -1399,7 +978,7 @@ export const TxOptions = () => {
                     args: [
                       proxy.address,
                       postTransfers,
-                      preTransfersWithFlags,
+                      approvalsWithFlags,
                       permitSignatures,
                       tx.to,
                       data,
@@ -1412,7 +991,7 @@ export const TxOptions = () => {
                     functionName: 'proxyCallMeta',
                     args: [
                       postTransfers,
-                      preTransfersWithFlags,
+                      approvalsWithFlags,
                       tx.to,
                       data,
                       withdrawals.map((w) => w.balance),
@@ -1469,7 +1048,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else if (shouldUsePermitRouter) {
-
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
@@ -1486,7 +1064,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
-
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
@@ -1514,7 +1091,7 @@ export const TxOptions = () => {
                 args: [
                   proxy.address,
                   postTransfers,
-                  preTransfersWithFlags,
+                  approvalsWithFlags,
                   tx.to,
                   data,
                   withdrawals.map((w) => w.balance),
@@ -1529,7 +1106,7 @@ export const TxOptions = () => {
                 args: [
                   proxy.address,
                   postTransfers,
-                  preTransfersWithFlags,
+                  approvalsWithFlags,
                   permitSignatures as readonly PermitData[] & never[],
                   tx.to,
                   data,
@@ -1544,7 +1121,7 @@ export const TxOptions = () => {
                 functionName: 'proxyCallMeta',
                 args: [
                   postTransfers,
-                  preTransfersWithFlags,
+                  approvalsWithFlags,
                   tx.to,
                   data,
                   withdrawals.map((w) => w.balance),
@@ -1586,7 +1163,7 @@ export const TxOptions = () => {
       hideModal();
       resetCheckState();
     } catch (error) {
-      console.error('❌ Transaction failed with error:', error);
+      console.error('Transaction failed with error:', error);
       console.error('Error details:', error);
 
       // Check if error is due to user abort
@@ -1594,10 +1171,9 @@ export const TxOptions = () => {
         error instanceof Error &&
         error.message === 'Transaction aborted by user'
       ) {
-        console.log('🛑 Transaction was aborted by user');
         toast.info('Transaction cancelled');
       } else {
-        toast.error(`Transaction failed!`);
+        toast.error('Transaction failed!');
       }
 
       closeModal();
@@ -1622,13 +1198,18 @@ export const TxOptions = () => {
 
   const handleBlur = useCallback(() => {
     if (inputSlippage === '') {
-      setInputSlippage(slippage.toString());
+      setInputSlippage(activeSlippage.toString());
       return;
     }
     const num = clamp(parseFloat(inputSlippage));
-    setSlippage(num);
+    setActiveSlippage(num);
     setInputSlippage(num.toString());
-  }, [inputSlippage, slippage, setSlippage, clamp]);
+  }, [inputSlippage, activeSlippage, setActiveSlippage, clamp]);
+
+  // Update input slippage when mode changes
+  useEffect(() => {
+    setInputSlippage(activeSlippage.toString());
+  }, [mode, activeSlippage]);
 
   if (!modalOpen) return null;
 
@@ -1651,8 +1232,18 @@ export const TxOptions = () => {
                 ? `Call to ${shortenAddress(tx.to)}`
                 : 'Setup your tx options here.'}
             </span>
-            <Button variant="outline" onClick={toggleAdvanced}>
-              {isAdvanced ? 'Hide advanced' : 'Show advanced'}
+            <Button
+              variant="outline"
+              onClick={toggleAdvanced}
+              disabled={isLoading || !isSimulationComplete}
+            >
+              {isLoading
+                ? 'Saving...'
+                : !isSimulationComplete
+                  ? 'Preparing...'
+                  : isAdvanced
+                    ? 'Hide advanced'
+                    : 'Show advanced'}
             </Button>
           </DialogDescription>
         </DialogHeader>
@@ -1670,13 +1261,19 @@ export const TxOptions = () => {
                 })}
               </TabsList>
             </Tabs>
-            <Label htmlFor="Slippage">Slippage</Label>
+            <Label htmlFor="Slippage">Slippage (%)</Label>
             <Input
               value={inputSlippage}
               onChange={handleChange}
               onBlur={handleBlur}
               placeholder="Slippage"
             />
+            {mode === EMode['pre/post'] && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Pre/Post mode requires higher slippage (recommended: 1-3%) due
+                to balance changes between simulation and execution
+              </p>
+            )}
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>
@@ -1770,20 +1367,25 @@ export const TxOptions = () => {
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
               {checks.diffs
-                .filter((check) => check.token != '' && check.balance < 0)
+                .filter(
+                  (check) => check.token != '' && Number(check.balance) < 0
+                )
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    - {formatter.format(Math.abs(check.balance))} {check.symbol}
+                    - {formatter.format(Math.abs(Number(check.balance)))}{' '}
+                    {check.symbol}
                   </p>
                 ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
               {checks.diffs
-                .filter((check) => check.token != '' && check.balance > 0)
+                .filter(
+                  (check) => check.token != '' && Number(check.balance) > 0
+                )
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    + {formatter.format(check.balance)} {check.symbol}
+                    + {formatter.format(Number(check.balance))} {check.symbol}
                   </p>
                 ))}
             </div>
@@ -1807,12 +1409,16 @@ export const TxOptions = () => {
           >
             Close
           </Button>
-          <Button 
-            onClick={handleSave} 
+          <Button
+            onClick={handleSave}
             disabled={isLoading || !isSimulationComplete}
           >
             {isLoading && <Loader2 className="animate-spin" />}{' '}
-            {isLoading ? 'Saving...' : !isSimulationComplete ? 'Preparing...' : 'Save'}
+            {isLoading
+              ? 'Saving...'
+              : !isSimulationComplete
+                ? 'Preparing...'
+                : 'Save'}
           </Button>
         </DialogFooter>
       </DialogContent>
