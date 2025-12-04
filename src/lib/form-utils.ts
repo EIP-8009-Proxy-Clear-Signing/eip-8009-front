@@ -1,6 +1,7 @@
 import { EMode, Check } from '@/hooks/use-checks';
 import { formatBalance, formatToken, formatBalancePrecise } from './utils';
 import { SimulationResult } from './simulation-utils';
+import { zeroAddress } from 'viem';
 
 export interface PopulateFormParams {
   from: SimulationResult['assetChanges'][0];
@@ -13,6 +14,7 @@ export interface PopulateFormParams {
   appDecimals: number;
   withSymbol: string;
   withDecimals: number;
+  gasUsed: bigint;
   changeApprovalCheck: (index: number, check: Check) => void;
   changeWithdrawalCheck: (index: number, check: Check) => void;
   changeDiffsCheck: (index: number, check: Check) => void;
@@ -36,6 +38,7 @@ export function populateFormChecks(params: PopulateFormParams): void {
     appDecimals,
     withSymbol,
     withDecimals,
+    gasUsed,
     changeApprovalCheck,
     changeWithdrawalCheck,
     changeDiffsCheck,
@@ -125,7 +128,12 @@ export function populateFormChecks(params: PopulateFormParams): void {
       );
       const maxExpectedLoss =
         (from.value.diff * fromSlippageMultiplier) / 1000000n;
-      const minFinalBalanceFrom = from.value.pre + maxExpectedLoss;
+
+      // For ETH, subtract gas from the expected balance
+      const isFromEth = from.token.address === zeroAddress;
+      const minFinalBalanceFrom = isFromEth
+        ? from.value.pre + maxExpectedLoss - gasUsed
+        : from.value.pre + maxExpectedLoss;
 
       changePostTransferCheck(1, {
         target: String(address),
