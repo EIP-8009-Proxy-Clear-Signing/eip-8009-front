@@ -18,6 +18,7 @@ import {
   MIN_SLIPPAGE,
   useChecks,
 } from '@/hooks/use-checks';
+import { ChangeEvent, useCallback, useRef, useState, useEffect } from 'react';
 import {
   Accordion,
   AccordionContent,
@@ -44,7 +45,6 @@ import {
   zeroAddress,
 } from 'viem';
 import { whatsabi } from '@shazow/whatsabi';
-import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   getEnumValues,
   getExplorerUrl,
@@ -261,6 +261,8 @@ export const TxOptions = () => {
     checks,
     slippage,
     setSlippage,
+    slippagePrePost,
+    setSlippagePrePost,
     createApprovalCheck,
     changeApprovalCheck,
     removeApprovalCheck,
@@ -278,7 +280,11 @@ export const TxOptions = () => {
     createPostTransferCheck,
   } = useChecks();
 
-  const [inputSlippage, setInputSlippage] = useState<string>(String(slippage));
+  // Use appropriate slippage based on mode
+  const activeSlippage = mode === EMode['pre/post'] ? slippagePrePost : slippage;
+  const setActiveSlippage = mode === EMode['pre/post'] ? setSlippagePrePost : setSlippage;
+
+  const [inputSlippage, setInputSlippage] = useState<string>(String(activeSlippage));
 
   const permitSignaturesRef = useRef<Map<string, PermitData>>(new Map());
 
@@ -484,7 +490,7 @@ export const TxOptions = () => {
       const balanceCheck = await checkSufficientBalance({
         fromToken: from.token,
         fromValueDiff: from.value.diff,
-        slippage,
+        slippage: activeSlippage,
         publicClient,
         address,
       });
@@ -530,7 +536,7 @@ export const TxOptions = () => {
         to,
         txTo: tx.to,
         address,
-        slippage,
+        slippage: activeSlippage,
         mode,
         appSymbol: appMetadata.symbol,
         appDecimals: appMetadata.decimals,
@@ -567,7 +573,7 @@ export const TxOptions = () => {
     tx,
     address,
     chainId,
-    slippage,
+    activeSlippage,
     mode,
     walletClient,
     usePermitRouter,
@@ -1184,13 +1190,18 @@ export const TxOptions = () => {
 
   const handleBlur = useCallback(() => {
     if (inputSlippage === '') {
-      setInputSlippage(slippage.toString());
+      setInputSlippage(activeSlippage.toString());
       return;
     }
     const num = clamp(parseFloat(inputSlippage));
-    setSlippage(num);
+    setActiveSlippage(num);
     setInputSlippage(num.toString());
-  }, [inputSlippage, slippage, setSlippage, clamp]);
+  }, [inputSlippage, activeSlippage, setActiveSlippage, clamp]);
+
+  // Update input slippage when mode changes
+  useEffect(() => {
+    setInputSlippage(activeSlippage.toString());
+  }, [mode, activeSlippage]);
 
   if (!modalOpen) return null;
 
@@ -1234,13 +1245,18 @@ export const TxOptions = () => {
                 })}
               </TabsList>
             </Tabs>
-            <Label htmlFor="Slippage">Slippage</Label>
+            <Label htmlFor="Slippage">Slippage (%)</Label>
             <Input
               value={inputSlippage}
               onChange={handleChange}
               onBlur={handleBlur}
               placeholder="Slippage"
             />
+            {mode === EMode['pre/post'] && (
+              <p className="text-xs text-muted-foreground mt-1">
+                ⚠️ Pre/Post mode requires higher slippage (recommended: 3-5%) due to balance changes between simulation and execution
+              </p>
+            )}
             <Accordion type="single" collapsible defaultValue="pre-transfer">
               <AccordionItem value="approval">
                 <AccordionTrigger>Approval</AccordionTrigger>
