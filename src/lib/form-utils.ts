@@ -16,6 +16,7 @@ export interface PopulateFormParams {
   changeApprovalCheck: (index: number, check: Check) => void;
   changeWithdrawalCheck: (index: number, check: Check) => void;
   changeDiffsCheck: (index: number, check: Check) => void;
+  changePreTransferCheck: (index: number, check: Check) => void;
   changePostTransferCheck: (index: number, check: Check) => void;
 }
 
@@ -38,6 +39,7 @@ export function populateFormChecks(params: PopulateFormParams): void {
     changeApprovalCheck,
     changeWithdrawalCheck,
     changeDiffsCheck,
+    changePreTransferCheck,
     changePostTransferCheck,
   } = params;
 
@@ -90,10 +92,28 @@ export function populateFormChecks(params: PopulateFormParams): void {
     }
 
     case EMode['pre/post']: {
-      // For pre/post mode, proxyCallMeta checks ABSOLUTE final balance
-      // We need to check both received and spent tokens
+      // For pre/post mode, we check both pre and post balances
+      // Pre-transfer checks: the balances BEFORE the transaction
+      // Post-transfer checks: the minimum acceptable balances AFTER the transaction (with slippage)
 
-      // 1. Check received token (to): min final balance = pre + (diff * (1 - slippage))
+      // 1. Pre-transfer check for received token (to): just the pre-balance
+      changePreTransferCheck(0, {
+        target: String(address),
+        token: formatToken(to.token.symbol, to.token.address),
+        balance: formatBalancePrecise(to.value.pre, to.token.decimals || 18),
+      });
+
+      // 2. Pre-transfer check for spent token (from): just the pre-balance
+      changePreTransferCheck(1, {
+        target: String(address),
+        token: formatToken(from.token.symbol, from.token.address),
+        balance: formatBalancePrecise(
+          from.value.pre,
+          from.token.decimals || 18
+        ),
+      });
+
+      // 3. Post-transfer check for received token (to): min final balance = pre + (diff * (1 - slippage))
       const toSlippageMultiplier = BigInt(
         Math.floor((1 - slippage / 100) * 10000)
       );
@@ -109,7 +129,7 @@ export function populateFormChecks(params: PopulateFormParams): void {
         ),
       });
 
-      // 2. Check spent token (from): max final balance = pre + (diff * (1 + slippage))
+      // 4. Post-transfer check for spent token (from): max final balance = pre + (diff * (1 + slippage))
       // Since diff is negative for spent tokens, this calculates the minimum remaining balance
       const fromSlippageMultiplier = BigInt(
         Math.floor((1 + slippage / 100) * 10000)
@@ -126,6 +146,8 @@ export function populateFormChecks(params: PopulateFormParams): void {
           from.token.decimals || 18
         ),
       });
+
+      break;
     }
   }
 }

@@ -504,8 +504,12 @@ export const TxOptions = () => {
           break;
         }
         case EMode['pre/post']: {
+          // Create pre-transfer checks (for initial balances)
+          if (!checks.preTransfer.length) createPreTransferCheck();
+          if (checks.preTransfer.length < 2) createPreTransferCheck();
+          // Create post-transfer checks (for final balances with slippage)
           if (!checks.postTransfer.length) createPostTransferCheck();
-          if (checks.postTransfer.length < 2) createPostTransferCheck(); // Create second check for spent token
+          if (checks.postTransfer.length < 2) createPostTransferCheck();
           break;
         }
       }
@@ -535,6 +539,7 @@ export const TxOptions = () => {
         changeApprovalCheck,
         changeWithdrawalCheck,
         changeDiffsCheck,
+        changePreTransferCheck,
         changePostTransferCheck,
       });
 
@@ -569,14 +574,17 @@ export const TxOptions = () => {
     checks.approvals.length,
     checks.withdrawals.length,
     checks.diffs.length,
+    checks.preTransfer.length,
     checks.postTransfer.length,
     createApprovalCheck,
     createWithdrawalCheck,
     createDiffsCheck,
+    createPreTransferCheck,
     createPostTransferCheck,
     changeApprovalCheck,
     changeWithdrawalCheck,
     changeDiffsCheck,
+    changePreTransferCheck,
     changePostTransferCheck,
   ]);
 
@@ -701,20 +709,12 @@ export const TxOptions = () => {
         withdrawalsToUse = [];
       }
 
-      // const [postTransfers, preTransfers, diffs, approvals, withdrawals] =
-      //   await Promise.all([
-      //     transformToMetadata(checks.postTransfer, publicClient),
-      //     transformToMetadata(checks.preTransfer, publicClient),
-
-      //     transformToMetadata(checks.diffs, publicClient),
-      //     transformToMetadata(approvalsToUse, publicClient),
-      //     transformToMetadata(withdrawalsToUse, publicClient),
-      //   ]);
-
-      const [postTransfers, diffs, approvals, withdrawals] =
+      // Transform metadata for contract calls
+      // Note: preTransfers are populated in UI but NOT sent to contract (UI display only)
+      const [postTransfers, , diffs, approvals, withdrawals] =
         await Promise.all([
           transformToMetadata(checks.postTransfer, publicClient),
-
+          transformToMetadata(checks.preTransfer, publicClient), // For UI only
           transformToMetadata(checks.diffs, publicClient),
           transformToMetadata(approvalsToUse, publicClient),
           transformToMetadata(withdrawalsToUse, publicClient),
@@ -727,10 +727,8 @@ export const TxOptions = () => {
         useTransfer: isUniversalRouter && !hasWrapEthCommand,
       }));
 
-      // const preTransfersWithFlags = preTransfers.map((preTransfer) => ({
-      //   balance: preTransfer.balance,
-      //   useTransfer: false,
-      // }));
+      // Note: preTransfers are populated for UI display only
+      // They are NOT sent to the contract - only postTransfers are validated on-chain
 
       // Check which tokens support permit (EIP-2612)
       const permitSupport = await Promise.all(
