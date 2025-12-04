@@ -114,11 +114,26 @@ export function populateFormChecks(params: PopulateFormParams): void {
       });
 
       // 3. Post-transfer check for received token (to): min final balance = pre + (diff * (1 - slippage))
+      // Use 1000000 multiplier for 0.0001% precision (vs 10000 for 0.01% precision)
       const toSlippageMultiplier = BigInt(
-        Math.floor((1 - slippage / 100) * 10000)
+        Math.floor((1 - slippage / 100) * 1000000)
       );
-      const minExpectedGain = (to.value.diff * toSlippageMultiplier) / 10000n;
+      const minExpectedGain = (to.value.diff * toSlippageMultiplier) / 1000000n;
       const minFinalBalanceTo = to.value.pre + minExpectedGain;
+
+      console.log('📊 Pre/Post Mode - Received Token (TO):', {
+        symbol: to.token.symbol,
+        pre: to.value.pre.toString(),
+        diff: to.value.diff.toString(),
+        slippage,
+        toSlippageMultiplier: toSlippageMultiplier.toString(),
+        minExpectedGain: minExpectedGain.toString(),
+        minFinalBalanceTo: minFinalBalanceTo.toString(),
+        formatted: formatBalancePrecise(
+          minFinalBalanceTo,
+          to.token.decimals || 18
+        ),
+      });
 
       changePostTransferCheck(0, {
         target: String(address),
@@ -131,12 +146,27 @@ export function populateFormChecks(params: PopulateFormParams): void {
 
       // 4. Post-transfer check for spent token (from): max final balance = pre + (diff * (1 + slippage))
       // Since diff is negative for spent tokens, this calculates the minimum remaining balance
+      // Use 1000000 multiplier for 0.0001% precision
       const fromSlippageMultiplier = BigInt(
-        Math.floor((1 + slippage / 100) * 10000)
+        Math.floor((1 + slippage / 100) * 1000000)
       );
       const maxExpectedLoss =
-        (from.value.diff * fromSlippageMultiplier) / 10000n;
+        (from.value.diff * fromSlippageMultiplier) / 1000000n;
       const minFinalBalanceFrom = from.value.pre + maxExpectedLoss;
+
+      console.log('📊 Pre/Post Mode - Spent Token (FROM):', {
+        symbol: from.token.symbol,
+        pre: from.value.pre.toString(),
+        diff: from.value.diff.toString(),
+        slippage,
+        fromSlippageMultiplier: fromSlippageMultiplier.toString(),
+        maxExpectedLoss: maxExpectedLoss.toString(),
+        minFinalBalanceFrom: minFinalBalanceFrom.toString(),
+        formatted: formatBalancePrecise(
+          minFinalBalanceFrom,
+          from.token.decimals || 18
+        ),
+      });
 
       changePostTransferCheck(1, {
         target: String(address),

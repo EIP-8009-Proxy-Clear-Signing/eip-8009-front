@@ -23,6 +23,8 @@ export type UseChecks = {
   };
   slippage: number;
   setSlippage: (slippage: number) => void;
+  slippagePrePost: number;
+  setSlippagePrePost: (slippage: number) => void;
   createDiffsCheck: () => void;
   changeDiffsCheck: (index: number, check: Check) => void;
   removeDiffsCheck: (index: number) => void;
@@ -47,7 +49,8 @@ export type UseChecks = {
 
 export const MIN_SLIPPAGE = 0;
 export const MAX_SLIPPAGE = 30;
-export const DEFAULT_SLIPPAGE = 0.1; // 0.5% is a reasonable default for DEX swaps
+export const DEFAULT_SLIPPAGE = 0.001;
+export const DEFAULT_SLIPPAGE_PREPOST = 1.0;
 
 export const useChecks = create<UseChecks>((set) => ({
   mode: EMode.diifs,
@@ -59,6 +62,7 @@ export const useChecks = create<UseChecks>((set) => ({
     diffs: [],
   },
   slippage: DEFAULT_SLIPPAGE,
+  slippagePrePost: DEFAULT_SLIPPAGE_PREPOST,
   setMode: (mode: EMode) =>
     set(() => ({
       mode,
@@ -71,6 +75,17 @@ export const useChecks = create<UseChecks>((set) => ({
         return set(() => ({ slippage: MIN_SLIPPAGE }));
       } else if (MAX_SLIPPAGE < slippage) {
         return set(() => ({ slippage: MAX_SLIPPAGE }));
+      }
+    }
+  },
+  setSlippagePrePost: (slippagePrePost) => {
+    if (slippagePrePost >= MIN_SLIPPAGE && MAX_SLIPPAGE >= slippagePrePost) {
+      return set(() => ({ slippagePrePost }));
+    } else {
+      if (slippagePrePost < MIN_SLIPPAGE) {
+        return set(() => ({ slippagePrePost: MIN_SLIPPAGE }));
+      } else if (MAX_SLIPPAGE < slippagePrePost) {
+        return set(() => ({ slippagePrePost: MAX_SLIPPAGE }));
       }
     }
   },
