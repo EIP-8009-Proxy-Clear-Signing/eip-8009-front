@@ -180,14 +180,14 @@ function modifyV4Swap(
       );
       return { modified: true, newInput: newV4Input };
     } else {
-      console.warn('⚠️ No SETTLE actions found or modified in V4 plan');
+      console.warn('No SETTLE actions found or modified in V4 plan');
       toast.error(
         'V4 transaction may fail: No SETTLE actions could be modified for pre-transfer.'
       );
       return { modified: false, newInput: v4Input };
     }
   } catch (error) {
-    console.error('❌ Failed to process V4_SWAP:', error);
+    console.error('Failed to process V4_SWAP:', error);
     toast.error(
       'Failed to process V4 swap. The transaction may still work with pre-transfer.'
     );
@@ -202,7 +202,7 @@ function modifyV3Swap(
   userAddress: string,
   commandName: string
 ): string {
-  console.log(`🔄 Modifying ${commandName} at index ${index}`);
+  console.log(`Modifying ${commandName} at index ${index}`);
 
   const inputData = '0x' + swapInput.slice(2);
 
@@ -251,7 +251,7 @@ function modifyV3Swap(
     pathLengthHex +
     pathData;
 
-  console.log(`✅ Modified ${commandName} input`);
+  console.log(`Modified ${commandName} input`);
   return newInput;
 }
 
@@ -262,7 +262,7 @@ function modifyV2Swap(
   userAddress: string,
   commandName: string
 ): string {
-  console.log(`🔄 Modifying ${commandName} at index ${index}`);
+  console.log(`Modifying ${commandName} at index ${index}`);
 
   const inputData = '0x' + swapInput.slice(2);
 
@@ -311,7 +311,7 @@ function modifyV2Swap(
     pathArrayLengthHex +
     pathArrayData;
 
-  console.log(`✅ Modified ${commandName} input`);
+  console.log(`Modified ${commandName} input`);
   return newInput;
 }
 
@@ -351,7 +351,7 @@ export function modifyUniversalRouterCalldata(
       );
       if (permit2PermitIndex !== -1) {
         console.log(
-          `🗑️  Removing PERMIT2_PERMIT command at index ${permit2PermitIndex}`
+          `Removing PERMIT2_PERMIT command at index ${permit2PermitIndex}`
         );
         newCommands.splice(permit2PermitIndex, 1);
         newInputs.splice(permit2PermitIndex, 1);
@@ -432,7 +432,7 @@ export function modifyUniversalRouterCalldata(
         ],
       });
 
-      console.log('✅ Successfully modified calldata');
+      console.log('Successfully modified calldata');
       console.log('Old data length:', txData.length);
       console.log('New data length:', newData.length);
 
@@ -443,7 +443,7 @@ export function modifyUniversalRouterCalldata(
     console.groupEnd();
     return txData;
   } catch (error) {
-    console.error('❌ Failed to modify Universal Router calldata:', error);
+    console.error('Failed to modify Universal Router calldata:', error);
     console.error(error);
     console.groupEnd();
     return txData;
