@@ -43,8 +43,6 @@ export function populateFormChecks(params: PopulateFormParams): void {
     changePostTransferCheck,
   } = params;
 
-  // Set approval check - use the value FROM MODIFIED SIMULATION
-  // This ensures UI consistency: everything shown to user comes from the same simulation
   const approvalBalance = formatBalance(-from.value.diff, from.token.decimals);
 
   changeApprovalCheck(0, {
@@ -55,7 +53,6 @@ export function populateFormChecks(params: PopulateFormParams): void {
     decimals: appDecimals,
   });
 
-  // Set withdrawal check with slippage
   changeWithdrawalCheck(0, {
     target: String(address),
     token: formatToken(to.token.symbol, to.token.address),
@@ -76,7 +73,6 @@ export function populateFormChecks(params: PopulateFormParams): void {
           (1 - slippage / 100),
       });
 
-      // Always add the input token to diffs (including ETH)
       const inputBalance = -(
         formatBalance(from.value.diff, from.token.decimals) *
         (1 + slippage / 100)
@@ -92,18 +88,13 @@ export function populateFormChecks(params: PopulateFormParams): void {
     }
 
     case EMode['pre/post']: {
-      // For pre/post mode, we check both pre and post balances
-      // Pre-transfer checks: the balances BEFORE the transaction
-      // Post-transfer checks: the minimum acceptable balances AFTER the transaction (with slippage)
-
-      // 1. Pre-transfer check for received token (to): just the pre-balance
+      // Pre-transfer checks: initial balances before transaction
       changePreTransferCheck(0, {
         target: String(address),
         token: formatToken(to.token.symbol, to.token.address),
         balance: formatBalancePrecise(to.value.pre, to.token.decimals || 18),
       });
 
-      // 2. Pre-transfer check for spent token (from): just the pre-balance
       changePreTransferCheck(1, {
         target: String(address),
         token: formatToken(from.token.symbol, from.token.address),
@@ -113,27 +104,12 @@ export function populateFormChecks(params: PopulateFormParams): void {
         ),
       });
 
-      // 3. Post-transfer check for received token (to): min final balance = pre + (diff * (1 - slippage))
-      // Use 1000000 multiplier for 0.0001% precision (vs 10000 for 0.01% precision)
+      // Post-transfer checks: final balances with slippage tolerance
       const toSlippageMultiplier = BigInt(
         Math.floor((1 - slippage / 100) * 1000000)
       );
       const minExpectedGain = (to.value.diff * toSlippageMultiplier) / 1000000n;
       const minFinalBalanceTo = to.value.pre + minExpectedGain;
-
-      console.log('📊 Pre/Post Mode - Received Token (TO):', {
-        symbol: to.token.symbol,
-        pre: to.value.pre.toString(),
-        diff: to.value.diff.toString(),
-        slippage,
-        toSlippageMultiplier: toSlippageMultiplier.toString(),
-        minExpectedGain: minExpectedGain.toString(),
-        minFinalBalanceTo: minFinalBalanceTo.toString(),
-        formatted: formatBalancePrecise(
-          minFinalBalanceTo,
-          to.token.decimals || 18
-        ),
-      });
 
       changePostTransferCheck(0, {
         target: String(address),
@@ -144,29 +120,12 @@ export function populateFormChecks(params: PopulateFormParams): void {
         ),
       });
 
-      // 4. Post-transfer check for spent token (from): max final balance = pre + (diff * (1 + slippage))
-      // Since diff is negative for spent tokens, this calculates the minimum remaining balance
-      // Use 1000000 multiplier for 0.0001% precision
       const fromSlippageMultiplier = BigInt(
         Math.floor((1 + slippage / 100) * 1000000)
       );
       const maxExpectedLoss =
         (from.value.diff * fromSlippageMultiplier) / 1000000n;
       const minFinalBalanceFrom = from.value.pre + maxExpectedLoss;
-
-      console.log('📊 Pre/Post Mode - Spent Token (FROM):', {
-        symbol: from.token.symbol,
-        pre: from.value.pre.toString(),
-        diff: from.value.diff.toString(),
-        slippage,
-        fromSlippageMultiplier: fromSlippageMultiplier.toString(),
-        maxExpectedLoss: maxExpectedLoss.toString(),
-        minFinalBalanceFrom: minFinalBalanceFrom.toString(),
-        formatted: formatBalancePrecise(
-          minFinalBalanceFrom,
-          from.token.decimals || 18
-        ),
-      });
 
       changePostTransferCheck(1, {
         target: String(address),

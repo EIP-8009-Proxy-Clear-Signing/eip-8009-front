@@ -22,7 +22,6 @@ export interface BuildSimulationDataParams {
 
 /**
  * Builds the simulation data based on which router is being used
- * Returns the encoded function data for simulation
  */
 export function buildSimulationData(
   params: BuildSimulationDataParams
@@ -39,22 +38,7 @@ export function buildSimulationData(
     modifiedData,
   } = params;
 
-  console.log('📋 Simulation config:', {
-    shouldUseApproveRouter,
-    willUsePermit,
-    hasPermitSignature: !!permitSignature,
-    approvals: approvals.map((a) => ({
-      target: a.balance.target,
-      token: a.balance.token,
-      balance: a.balance.balance.toString(),
-      useTransfer: a.useTransfer,
-    })),
-    txTo: txTo,
-    modifiedDataLength: modifiedData.length,
-  });
-
   if (willUsePermit && permitSignature) {
-    // Use PermitRouter for simulation with the permit signature
     return encodeFunctionData({
       abi: permitRouter.abi,
       functionName: 'permitProxyCallDiffsWithMeta',
@@ -69,14 +53,12 @@ export function buildSimulationData(
       ],
     }) as `0x${string}`;
   } else if (shouldUseApproveRouter && approvals.length > 0) {
-    // Use ApproveRouter for simulation since we have approvals now
     return encodeFunctionData({
       abi: targetContract.abi,
       functionName: 'approveProxyCallDiffsWithMeta',
       args: [proxy.address, [], approvals, txTo, modifiedData, []],
     }) as `0x${string}`;
   } else {
-    // Use basic proxy
     return encodeFunctionData({
       abi: proxy.abi,
       functionName: 'proxyCallDiffsMeta',

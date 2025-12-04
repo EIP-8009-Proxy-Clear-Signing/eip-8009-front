@@ -35,8 +35,7 @@ export interface ModifiedSimulationParams {
 
 /**
  * Simulates the ORIGINAL Uniswap transaction for security verification
- * This may fail (expected) because Permit2 validation happens on-chain
- * Returns approximate asset changes if successful
+ * May fail (expected) because Permit2 validation happens on-chain
  */
 export async function simulateOriginalTransaction(
   params: OriginalSimulationParams
@@ -49,9 +48,7 @@ export async function simulateOriginalTransaction(
     retryDelay = 500,
   } = params;
 
-  console.log(
-    '🔍 Step 1: Simulating ORIGINAL transaction for approximate changes...'
-  );
+  console.log('Simulating original transaction for approximate changes...');
 
   let retries = maxRetries;
   while (retries > 0) {
@@ -69,32 +66,22 @@ export async function simulateOriginalTransaction(
       });
 
       if (result.results[0].status === 'success') {
-        console.log('✅ Original simulation successful:', result.assetChanges);
+        console.log('Original simulation successful');
         return { success: true, result: result as SimulationResult };
       } else {
-        console.warn('⚠️ Original simulation returned failure status');
+        console.warn('Original simulation returned failure status');
         retries -= 1;
         if (retries > 0) {
-          console.log(
-            `🔄 Retrying original simulation (${retries} attempts left)...`
-          );
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
       }
-    } catch (error) {
+    } catch {
       retries -= 1;
       if (retries > 0) {
-        console.warn(
-          `⚠️ Original simulation failed, retrying (${retries} attempts left)...`
-        );
         await new Promise((resolve) => setTimeout(resolve, retryDelay));
       } else {
         console.warn(
-          '⚠️ Original simulation failed after all retries (expected for Permit2):',
-          error
-        );
-        console.log(
-          '💡 Will use modified transaction simulation for all values'
+          'Original simulation failed after all retries (expected for Permit2)'
         );
       }
     }
@@ -119,7 +106,7 @@ export async function simulateModifiedTransaction(
     maxRetries = 100,
   } = params;
 
-  console.log('🔍 Step 3: Simulating MODIFIED transaction through proxy...');
+  console.log('Simulating modified transaction through proxy...');
 
   let retries = maxRetries;
   while (retries > 0) {
@@ -136,21 +123,15 @@ export async function simulateModifiedTransaction(
         ],
       });
 
-      console.log(
-        '✅ Proxy simulation successful - showing real values in modal',
-        result
-      );
+      console.log('Proxy simulation successful');
       return result as SimulationResult;
     } catch (error) {
-      console.warn('⚠️ Proxy simulation failed:', error);
-      console.log(
-        '💡 Please manually configure approval and withdrawal checks'
-      );
+      console.warn('Proxy simulation failed:', error);
       retries -= 1;
     }
   }
 
-  console.error('❌ Proxy simulation failed after all retries');
+  console.error('Proxy simulation failed after all retries');
   return null;
 }
 
@@ -160,7 +141,7 @@ export async function simulateModifiedTransaction(
 export function validateSimulationResult(simRes: SimulationResult): boolean {
   if (simRes.results[0].status !== 'success') {
     console.error(
-      '❌ Proxy simulation returned failure status:',
+      'Proxy simulation returned failure status:',
       simRes.results[0]
     );
     return false;
@@ -177,8 +158,6 @@ export function extractAssetChanges(simRes: SimulationResult): {
 } {
   const from = simRes.assetChanges.find((asset) => asset.value.diff < 0);
   const to = simRes.assetChanges.find((asset) => asset.value.diff > 0);
-
-  console.log('📊 Asset changes for form:', { from, to });
 
   return { from, to };
 }

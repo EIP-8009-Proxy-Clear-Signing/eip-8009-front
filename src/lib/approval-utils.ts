@@ -45,8 +45,6 @@ export async function determineApprovalAmount(
   let inputTokenAddress: `0x${string}` | null = null;
 
   if (hasOriginalSimulation && originalSimRes) {
-    // Get input token (negative diff) from original simulation
-    // Skip native ETH as it doesn't need approval
     const inputChange = originalSimRes.assetChanges.find(
       (change) =>
         change.value.diff < 0n &&
@@ -57,24 +55,17 @@ export async function determineApprovalAmount(
       inputTokenAddress = inputChange.token.address as `0x${string}`;
       const rawAmount = -inputChange.value.diff;
       approvalAmount = rawAmount;
-      console.log('📊 From original simulation:', {
-        token: inputTokenAddress,
-        amount: approvalAmount.toString(),
-        rawAmount: rawAmount.toString(),
-      });
     }
   } else if (
     swapInfo?.inputToken &&
     swapInfo.inputToken !== zeroAddress &&
     swapInfo.inputToken !== ethAddress
   ) {
-    // Fallback to swap info
     inputTokenAddress = swapInfo.inputToken as `0x${string}`;
 
     if (swapInfo.inputAmount > 0n) {
       approvalAmount = swapInfo.inputAmount;
     } else {
-      // V4 or case where we don't have amount - check user's token balance
       try {
         const balance = await publicClient.readContract({
           address: inputTokenAddress,
@@ -82,25 +73,14 @@ export async function determineApprovalAmount(
           functionName: 'balanceOf',
           args: [address],
         });
-        // Use the user's full balance as approval amount (they probably want to swap it all)
         approvalAmount = balance;
-        console.log('📊 Using user balance for approval:', {
-          token: inputTokenAddress,
-          balance: balance.toString(),
-        });
       } catch {
-        // If we can't get balance, use a reasonably large number (1 trillion tokens with 18 decimals)
-        approvalAmount = BigInt('1000000000000000000000000'); // 1M tokens
+        approvalAmount = BigInt('1000000000000000000000000');
         console.warn(
-          '⚠️ Could not get token balance, using default approval amount'
+          'Could not get token balance, using default approval amount'
         );
       }
     }
-
-    console.log('📊 From swap info (fallback):', {
-      token: inputTokenAddress,
-      amount: approvalAmount.toString(),
-    });
   }
 
   return { approvalAmount, inputTokenAddress };
@@ -120,13 +100,7 @@ export interface CheckApprovalParams {
 export async function checkCurrentAllowance(
   params: CheckApprovalParams
 ): Promise<{ allowance: bigint; symbol: string }> {
-  const {
-    inputTokenAddress,
-    approvalAmount,
-    targetContract,
-    publicClient,
-    address,
-  } = params;
+  const { inputTokenAddress, targetContract, publicClient, address } = params;
 
   const [currentAllowance, tokenSymbol] = await publicClient.multicall({
     contracts: [
@@ -143,12 +117,6 @@ export async function checkCurrentAllowance(
       },
     ],
     allowFailure: false,
-  });
-
-  console.log('📊 Current allowance:', {
-    token: tokenSymbol,
-    current: currentAllowance.toString(),
-    needed: approvalAmount.toString(),
   });
 
   return { allowance: currentAllowance, symbol: tokenSymbol };
@@ -188,15 +156,10 @@ export async function requestPermitSignature(
   const storedPermit = permitSignaturesRef.current.get(tokenKey);
 
   if (storedPermit) {
-    console.log(
-      `✅ Reusing stored permit signature for ${tokenSymbol} (${inputTokenAddress})`
-    );
     return storedPermit;
   }
 
-  console.log(
-    `📝 Token ${tokenSymbol} supports permit - will collect signature for simulation and execution`
-  );
+  console.log(`Requesting permit signature for ${tokenSymbol}`);
 
   checkAborted();
 
@@ -207,11 +170,11 @@ export async function requestPermitSignature(
   try {
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour
 
-    // Generate permit signature - will be used for both simulation and execution
+    // Generate permit signature
     const permitSignature = await generatePermitSignature(
       inputTokenAddress,
       address,
-      permitRouter.address, // Permit to PermitRouter
+      permitRouter.address,
       approvalAmount,
       deadline,
       publicClient,
@@ -220,16 +183,12 @@ export async function requestPermitSignature(
 
     checkAborted();
 
-    // Store for reuse in subsequent calls
     permitSignaturesRef.current.set(tokenKey, permitSignature);
 
-    console.log(
-      `✅ Permit signature collected for ${tokenSymbol} - will use for simulation and execution`
-    );
     toast.success(`Permit granted for ${tokenSymbol}`);
     return permitSignature;
   } catch (error) {
-    console.error('❌ Permit signature failed:', error);
+    console.error('Permit signature failed:', error);
     toast.error(
       'Failed to get permit signature - please try standard approval'
     );
@@ -265,7 +224,7 @@ export async function requestStandardApproval(
     checkAborted,
   } = params;
 
-  console.log('📝 Requesting standard approval...');
+  console.log('Requesting standard approval...');
 
   checkAborted();
 
@@ -285,7 +244,7 @@ export async function requestStandardApproval(
 
     checkAborted();
 
-    console.log('⏳ Waiting for approval transaction:', hash);
+    console.log('Waiting for approval transaction:', hash);
     toast.info('Waiting for approval transaction...', {
       duration: 5000,
     });
@@ -298,11 +257,11 @@ export async function requestStandardApproval(
       throw new Error('Approval transaction reverted');
     }
 
-    console.log('✅ Approval confirmed - proceeding with simulation');
+    console.log('Approval confirmed');
     toast.success(`${tokenSymbol} approved successfully!`);
   } catch (error) {
-    console.error('❌ Approval failed:', error);
-    toast.error(`Approval failed!`);
+    console.error('Approval failed:', error);
+    toast.error('Approval failed!');
     throw error;
   }
 }
@@ -340,11 +299,8 @@ export async function handleApprovalFlow(
     checkAborted,
   } = params;
 
-  console.log('🔍 Checking token approval for simulation...');
-
   checkAborted();
 
-  // Check current allowance
   const { allowance: currentAllowance, symbol: tokenSymbol } =
     await checkCurrentAllowance({
       inputTokenAddress,
@@ -354,10 +310,7 @@ export async function handleApprovalFlow(
       address,
     });
 
-  // Check if approval is needed
   if (currentAllowance < approvalAmount) {
-    console.log('⚠️ Insufficient allowance - requesting approval...');
-
     // Check if token supports permit (EIP-2612)
     const tokenSupportsPermit = await supportsPermit(
       inputTokenAddress,
@@ -365,7 +318,6 @@ export async function handleApprovalFlow(
     );
 
     if (usePermitRouter && tokenSupportsPermit) {
-      // Use permit route
       const permitSignature = await requestPermitSignature({
         inputTokenAddress,
         tokenSymbol,
@@ -393,7 +345,7 @@ export async function handleApprovalFlow(
       return { permitSignature: null, willUsePermit: false };
     }
   } else {
-    console.log('✅ Sufficient allowance already exists');
+    console.log('Sufficient allowance already exists');
     return { permitSignature: null, willUsePermit: false };
   }
 }
