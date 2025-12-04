@@ -495,7 +495,7 @@ export const TxOptions = () => {
       }
 
       // Step 9: Extract asset changes
-      const { from, to } = extractAssetChanges(simRes);
+      const { from, to, gasUsed } = extractAssetChanges(simRes);
 
       if (!from || !to) {
         console.error('No asset changes detected in simulation');
@@ -560,6 +560,7 @@ export const TxOptions = () => {
       populateFormChecks({
         from,
         to,
+        gasUsed,
         txTo: tx.to,
         address,
         slippage: activeSlippage,

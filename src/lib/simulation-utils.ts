@@ -9,7 +9,10 @@ export interface SimulationResult {
     };
     value: { diff: bigint; pre: bigint; post: bigint };
   }>;
-  results: ReadonlyArray<{ status: 'success' | 'failure' }>;
+  results: ReadonlyArray<{
+    status: 'success' | 'failure';
+    gasUsed?: bigint;
+  }>;
 }
 
 export interface OriginalSimulationParams {
@@ -155,9 +158,11 @@ export function validateSimulationResult(simRes: SimulationResult): boolean {
 export function extractAssetChanges(simRes: SimulationResult): {
   from: SimulationResult['assetChanges'][0] | undefined;
   to: SimulationResult['assetChanges'][0] | undefined;
+  gasUsed: bigint;
 } {
   const from = simRes.assetChanges.find((asset) => asset.value.diff < 0);
   const to = simRes.assetChanges.find((asset) => asset.value.diff > 0);
+  const gasUsed = simRes.results[0]?.gasUsed || 0n;
 
-  return { from, to };
+  return { from, to, gasUsed };
 }
