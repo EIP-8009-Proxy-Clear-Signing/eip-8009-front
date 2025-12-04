@@ -34,8 +34,6 @@ export async function checkSufficientBalance(
   const isFromEth =
     fromToken.address === zeroAddress || fromToken.address === ethAddress;
 
-  // IMPORTANT: We need to check against the amount WITH slippage buffer,
-  // not just the raw diff, because that's what will actually be used
   const rawAmount = -fromValueDiff;
   const requiredAmount = BigInt(
     Math.ceil(Number(rawAmount) * (1 + slippage / 100))
@@ -44,10 +42,8 @@ export async function checkSufficientBalance(
   let userBalance: bigint;
 
   if (isFromEth) {
-    // For ETH, get the user's ETH balance
     userBalance = await publicClient.getBalance({ address });
   } else {
-    // For ERC20 tokens, get the token balance
     userBalance = await publicClient.readContract({
       abi: erc20Abi,
       address: fromToken.address as `0x${string}`,
@@ -59,7 +55,7 @@ export async function checkSufficientBalance(
   const tokenSymbol = fromToken.symbol || 'TOKEN';
   const tokenDecimals = fromToken.decimals || 18;
 
-  console.log('💰 Balance check:', {
+  console.log('Balance check:', {
     token: tokenSymbol,
     rawAmount: rawAmount.toString(),
     requiredWithSlippage: requiredAmount.toString(),
@@ -72,7 +68,7 @@ export async function checkSufficientBalance(
 
   if (!sufficient) {
     const shortfall = requiredAmount - userBalance;
-    console.error('❌ Insufficient balance for transaction');
+    console.error('Insufficient balance for transaction');
     toast.error(
       `Insufficient ${tokenSymbol} balance. You need ${formatBalance(requiredAmount, tokenDecimals)} (including ${slippage}% slippage buffer) but only have ${formatBalance(userBalance, tokenDecimals)}. Shortfall: ${formatBalance(shortfall, tokenDecimals)} ${tokenSymbol}`,
       { duration: 10000 }

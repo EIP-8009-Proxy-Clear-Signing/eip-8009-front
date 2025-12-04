@@ -106,7 +106,7 @@ function extractV4SwapInfo(v4Input: string): SwapInfo | null {
 
           const [currency, amount] = settleParams;
 
-          console.log('🔍 V4 SETTLE decoded:', {
+          console.log('V4 SETTLE decoded:', {
             currency,
             amount,
             amountHex: '0x' + amount.toString(16),

@@ -177,7 +177,9 @@ const transformToMetadata = async (
   checks: Check[],
   publicClient: PublicClient
 ) => {
-  const filteredChecks = checks.filter((check) => check.token !== zeroAddress && check.token !== "");
+  const filteredChecks = checks.filter(
+    (check) => check.token !== zeroAddress && check.token !== ''
+  );
   const ether = checks.find((check) => check.token === zeroAddress);
 
   const checksSymbolRequests = filteredChecks.map(({ token }) => ({
@@ -281,10 +283,14 @@ export const TxOptions = () => {
   } = useChecks();
 
   // Use appropriate slippage based on mode
-  const activeSlippage = mode === EMode['pre/post'] ? slippagePrePost : slippage;
-  const setActiveSlippage = mode === EMode['pre/post'] ? setSlippagePrePost : setSlippage;
+  const activeSlippage =
+    mode === EMode['pre/post'] ? slippagePrePost : slippage;
+  const setActiveSlippage =
+    mode === EMode['pre/post'] ? setSlippagePrePost : setSlippage;
 
-  const [inputSlippage, setInputSlippage] = useState<string>(String(activeSlippage));
+  const [inputSlippage, setInputSlippage] = useState<string>(
+    String(activeSlippage)
+  );
 
   const permitSignaturesRef = useRef<Map<string, PermitData>>(new Map());
 
@@ -335,6 +341,7 @@ export const TxOptions = () => {
 
     const checkAborted = () => {
       if (abortController.signal.aborted) {
+        resetCheckState();
         throw new Error('Operation aborted - modal was closed');
       }
     };
@@ -352,7 +359,10 @@ export const TxOptions = () => {
       const approveRouter = getContract('proxyApproveRouter', chainId);
       const permitRouter = getContract('proxyPermitRouter', chainId);
 
-      const isUniversalRouter = isUniversalRouterTransaction(tx.to, uniswapRouter.address);
+      const isUniversalRouter = isUniversalRouterTransaction(
+        tx.to,
+        uniswapRouter.address
+      );
 
       // Step 2: Simulate ORIGINAL transaction
       setLoadingStep('Simulating original transaction...');
@@ -365,30 +375,36 @@ export const TxOptions = () => {
 
       // Step 3: Modify transaction calldata
       setLoadingStep('Modifying transaction calldata...');
-      console.log('🔍 Step 2: Modifying transaction calldata for proxy...');
       let modifiedData = tx.data;
 
       if (isUniversalRouter) {
-        const modified = modifyUniversalRouterCalldata(tx.data, uniswapRouter, address);
+        const modified = modifyUniversalRouterCalldata(
+          tx.data,
+          uniswapRouter,
+          address
+        );
         modifiedData = modified ?? tx.data;
-        console.log('✅ Calldata modified for Universal Router');
       }
 
       // Step 4: Extract swap info and determine approval amount
-      const swapInfo = isUniversalRouter ? extractSwapInfo(tx.data, uniswapRouter.abi) : null;
-      console.log('🔍 Swap info:', swapInfo);
+      const swapInfo = isUniversalRouter
+        ? extractSwapInfo(tx.data, uniswapRouter.abi)
+        : null;
 
-      const { approvalAmount, inputTokenAddress } = await determineApprovalAmount({
-        hasOriginalSimulation,
-        originalSimRes,
-        swapInfo,
-        publicClient,
-        address,
-      });
+      const { approvalAmount, inputTokenAddress } =
+        await determineApprovalAmount({
+          hasOriginalSimulation,
+          originalSimRes,
+          swapInfo,
+          publicClient,
+          address,
+        });
 
       // Step 5: Determine router and handle approvals/permits
       const isTokenSwap =
-        inputTokenAddress && inputTokenAddress !== zeroAddress && inputTokenAddress !== ethAddress;
+        inputTokenAddress &&
+        inputTokenAddress !== zeroAddress &&
+        inputTokenAddress !== ethAddress;
 
       let shouldUseApproveRouter = false;
       let willUsePermitForExecution = false;
@@ -396,9 +412,6 @@ export const TxOptions = () => {
 
       if (isTokenSwap) {
         shouldUseApproveRouter = true;
-        console.log('📝 Token swap detected - will use ApproveRouter/PermitRouter');
-      } else {
-        console.log('📝 No token approval needed (native ETH or no input token) - will use BasicProxy');
       }
 
       const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
@@ -426,7 +439,9 @@ export const TxOptions = () => {
 
       // Step 7: Build simulation call for MODIFIED transaction
       setLoadingStep('Simulating modified transaction through proxy...');
-      const simulationContract = willUsePermitForExecution ? permitRouter : targetContract;
+      const simulationContract = willUsePermitForExecution
+        ? permitRouter
+        : targetContract;
 
       const approvals =
         isTokenSwap && inputTokenAddress
@@ -464,14 +479,18 @@ export const TxOptions = () => {
       });
 
       if (!simRes) {
-        console.error('❌ Proxy simulation failed');
-        toast.error('Simulation failed - please check the transaction parameters');
+        console.error('Proxy simulation failed');
+        toast.error(
+          'Simulation failed - please check the transaction parameters'
+        );
         return;
       }
 
       // Validate simulation
       if (!validateSimulationResult(simRes)) {
-        toast.error('Simulation failed - please check the transaction parameters');
+        toast.error(
+          'Simulation failed - please check the transaction parameters'
+        );
         return;
       }
 
@@ -479,13 +498,16 @@ export const TxOptions = () => {
       const { from, to } = extractAssetChanges(simRes);
 
       if (!from || !to) {
-        console.error('❌ No asset changes detected in simulation');
-        toast.error('Could not detect token swap in simulation - please try again');
+        console.error('No asset changes detected in simulation');
+        toast.error(
+          'Could not detect token swap in simulation - please try again'
+        );
         return;
       }
 
       // Step 10: Check user balance
-      const isFromEth = from.token.address === zeroAddress || from.token.address === ethAddress;
+      const isFromEth =
+        from.token.address === zeroAddress || from.token.address === ethAddress;
 
       const balanceCheck = await checkSufficientBalance({
         fromToken: from.token,
@@ -522,7 +544,11 @@ export const TxOptions = () => {
 
       // Step 12: Get token metadata
       checkAborted();
-      const appMetadata = await getTokenMetadata(from.token.address, publicClient, isFromEth);
+      const appMetadata = await getTokenMetadata(
+        from.token.address,
+        publicClient,
+        isFromEth
+      );
       checkAborted();
       const withMetadata = await getTokenMetadata(
         to.token.address,
@@ -551,16 +577,17 @@ export const TxOptions = () => {
 
       setLoadingStep('');
       setIsSimulationComplete(true);
-      console.log('✅ Form populated with real values from proxy simulation');
     } catch (error) {
       // Check if error is due to abort
-      if (error instanceof Error && error.message === 'Operation aborted - modal was closed') {
-        console.log('🛑 setDataToForm was aborted - modal was closed');
+      if (
+        error instanceof Error &&
+        error.message === 'Operation aborted - modal was closed'
+      ) {
         return;
       }
 
-      console.error('❌ Error in setDataToForm:', error);
-      toast.error(`Failed to prepare transaction!`);
+      console.error('Error in setDataToForm:', error);
+      toast.error('Failed to prepare transaction!');
       return;
     } finally {
       // Clear abort controller if operation completed
@@ -577,6 +604,7 @@ export const TxOptions = () => {
     mode,
     walletClient,
     usePermitRouter,
+    resetCheckState,
     checks.approvals.length,
     checks.withdrawals.length,
     checks.diffs.length,
@@ -600,7 +628,6 @@ export const TxOptions = () => {
 
   useEffect(() => {
     if (!modalOpen && abortControllerRef.current) {
-      console.log('⚠️ Modal closed - aborting all operations');
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
@@ -773,7 +800,8 @@ export const TxOptions = () => {
           return supports;
         });
 
-      const shouldUsePermitRouter = usePermitRouter && allTokensSupportPermit && !safe;
+      const shouldUsePermitRouter =
+        usePermitRouter && allTokensSupportPermit && !safe;
 
       const shouldUseApproveRouter =
         !shouldUsePermitRouter && approvalsWithFlags.some((a) => a.useTransfer);
@@ -785,23 +813,11 @@ export const TxOptions = () => {
           ? permitRouter
           : proxy;
 
-      console.log('🔍 Router selection:', {
-        usePermitRouter,
-        shouldUseApproveRouter,
-        shouldUsePermitRouter,
-        allTokensSupportPermit,
-        targetContract: targetContract.address,
-        permitSupport,
-      });
-
       const targetContractAddress = targetContract.address as `0x${string}`;
       const value = tx.value ? BigInt(tx.value) : undefined;
 
-      // Store permit signatures for later use (only needed if using permit router)
       const permitSignatures: PermitData[] = [];
 
-      // Only collect permit signatures if using permit router
-      // Standard approvals were already handled in setDataToForm()
       if (shouldUsePermitRouter) {
         for (let tokenIdx = 0; tokenIdx < approvalsToUse.length; tokenIdx++) {
           const token = approvalsToUse[tokenIdx];
@@ -821,20 +837,20 @@ export const TxOptions = () => {
 
           const tokenAddress = token.token as `0x${string}`;
           const tokenKey = tokenAddress.toLowerCase();
-          
+
           // Check if we already have a stored permit signature for this token
           const storedPermit = permitSignaturesRef.current.get(tokenKey);
-          
+
           if (storedPermit) {
             console.log(
-              `✅ Reusing stored permit signature for ${token.symbol || tokenAddress}`
+              `Reusing stored permit signature for ${token.symbol || tokenAddress}`
             );
             permitSignatures.push(storedPermit);
             continue; // Skip to next token
           }
 
           console.log(
-            `📝 Token ${tokenAddress} supports permit - collecting new signature for execution`
+            `Token ${tokenAddress} supports permit - collecting new signature for execution`
           );
 
           if (!walletClient) {
@@ -880,14 +896,11 @@ export const TxOptions = () => {
 
             checkAborted();
 
-            console.log(`✅ Permit signature collected for ${token.symbol || tokenAddress}`);
-            
-            // Store for potential reuse
             permitSignaturesRef.current.set(tokenKey, permitData);
             permitSignatures.push(permitData);
           } catch (error) {
-            console.error('❌ Failed to collect permit signature:', error);
-            toast.error(`Failed to get permit signature!`);
+            console.error('Failed to collect permit signature:', error);
+            toast.error('Failed to get permit signature!');
             throw error;
           }
         }
@@ -896,8 +909,6 @@ export const TxOptions = () => {
       checkAborted();
 
       let hash: `0x${string}` = '0x';
-
-      console.log('MODE USAGE:', mode, diffs);
 
       if (safe && safeInfo) {
         const mainTx = {
@@ -1037,7 +1048,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else if (shouldUsePermitRouter) {
-
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
@@ -1054,7 +1064,6 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
-
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
@@ -1154,7 +1163,7 @@ export const TxOptions = () => {
       hideModal();
       resetCheckState();
     } catch (error) {
-      console.error('❌ Transaction failed with error:', error);
+      console.error('Transaction failed with error:', error);
       console.error('Error details:', error);
 
       // Check if error is due to user abort
@@ -1162,10 +1171,9 @@ export const TxOptions = () => {
         error instanceof Error &&
         error.message === 'Transaction aborted by user'
       ) {
-        console.log('🛑 Transaction was aborted by user');
         toast.info('Transaction cancelled');
       } else {
-        toast.error(`Transaction failed!`);
+        toast.error('Transaction failed!');
       }
 
       closeModal();
@@ -1205,8 +1213,6 @@ export const TxOptions = () => {
 
   if (!modalOpen) return null;
 
-  console.log({checks})
-
   return (
     <Dialog
       open={modalOpen}
@@ -1226,8 +1232,18 @@ export const TxOptions = () => {
                 ? `Call to ${shortenAddress(tx.to)}`
                 : 'Setup your tx options here.'}
             </span>
-            <Button variant="outline" onClick={toggleAdvanced} disabled={isLoading || !isSimulationComplete}>
-              {isLoading ? 'Saving...' : !isSimulationComplete ? 'Preparing...' : isAdvanced ? 'Hide advanced' : 'Show advanced'}
+            <Button
+              variant="outline"
+              onClick={toggleAdvanced}
+              disabled={isLoading || !isSimulationComplete}
+            >
+              {isLoading
+                ? 'Saving...'
+                : !isSimulationComplete
+                  ? 'Preparing...'
+                  : isAdvanced
+                    ? 'Hide advanced'
+                    : 'Show advanced'}
             </Button>
           </DialogDescription>
         </DialogHeader>
@@ -1254,7 +1270,8 @@ export const TxOptions = () => {
             />
             {mode === EMode['pre/post'] && (
               <p className="text-xs text-muted-foreground mt-1">
-                ⚠️ Pre/Post mode requires higher slippage (recommended: 3-5%) due to balance changes between simulation and execution
+                Pre/Post mode requires higher slippage (recommended: 1-3%) due
+                to balance changes between simulation and execution
               </p>
             )}
             <Accordion type="single" collapsible defaultValue="pre-transfer">
@@ -1350,17 +1367,22 @@ export const TxOptions = () => {
             <div className="flex flex-col gap-2">
               <Label>You spend:</Label>
               {checks.diffs
-                .filter((check) => check.token != '' && Number(check.balance) < 0)
+                .filter(
+                  (check) => check.token != '' && Number(check.balance) < 0
+                )
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
-                    - {formatter.format(Math.abs(Number(check.balance)))} {check.symbol}
+                    - {formatter.format(Math.abs(Number(check.balance)))}{' '}
+                    {check.symbol}
                   </p>
                 ))}
             </div>
             <div className="flex flex-col gap-2">
               <Label>You receive:</Label>
               {checks.diffs
-                .filter((check) => check.token != '' && Number(check.balance) > 0)
+                .filter(
+                  (check) => check.token != '' && Number(check.balance) > 0
+                )
                 .map((check) => (
                   <p key={check.token} className="text-lg font-bold">
                     + {formatter.format(Number(check.balance))} {check.symbol}
@@ -1387,12 +1409,16 @@ export const TxOptions = () => {
           >
             Close
           </Button>
-          <Button 
-            onClick={handleSave} 
+          <Button
+            onClick={handleSave}
             disabled={isLoading || !isSimulationComplete}
           >
             {isLoading && <Loader2 className="animate-spin" />}{' '}
-            {isLoading ? 'Saving...' : !isSimulationComplete ? 'Preparing...' : 'Save'}
+            {isLoading
+              ? 'Saving...'
+              : !isSimulationComplete
+                ? 'Preparing...'
+                : 'Save'}
           </Button>
         </DialogFooter>
       </DialogContent>
