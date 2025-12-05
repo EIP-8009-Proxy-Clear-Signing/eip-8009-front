@@ -556,97 +556,16 @@ export const TxOptions = () => {
         to.token.address === zeroAddress || to.token.address === ethAddress
       );
 
-      // Step 13: Estimate gas for the actual contract call
+      // Step 13: Estimate gas for the actual transaction
       setLoadingStep('Estimating gas...');
       let estimatedGas = 0n;
       
       try {
-        // For gas estimation, we just use empty arrays with type assertion
-        const emptyMetadataChecks = [] as const;
-        const emptyWithdrawals = [] as const;
-        
-        const baseApprovals = approvals.map(a => ({ ...a, useTransfer: true }));
-        
-        // Build the encoded data for gas estimation
-        const gasEstimationData = await (async () => {
-          if (mode === EMode.diifs) {
-            if (shouldUseApproveRouter) {
-              return encodeFunctionData({
-                abi: simulationContract.abi,
-                functionName: 'approveProxyCallDiffsWithMeta',
-                args: [
-                  proxy.address,
-                  emptyMetadataChecks,
-                  baseApprovals,
-                  tx.to,
-                  modifiedData,
-                  emptyWithdrawals,
-                ] as const,
-              });
-            } else if (willUsePermitForExecution) {
-              return encodeFunctionData({
-                abi: simulationContract.abi,
-                functionName: 'permitProxyCallDiffsWithMeta',
-                args: [
-                  proxy.address,
-                  emptyMetadataChecks,
-                  baseApprovals,
-                  permitSignature ? [permitSignature] : ([] as const),
-                  tx.to,
-                  modifiedData,
-                  emptyWithdrawals,
-                ] as const,
-              });
-            } else {
-              return encodeFunctionData({
-                abi: simulationContract.abi,
-                functionName: 'proxyCallDiffsMeta',
-                args: [emptyMetadataChecks, baseApprovals, tx.to, modifiedData, emptyWithdrawals] as const,
-              });
-            }
-          } else {
-            // pre/post mode
-            if (shouldUseApproveRouter) {
-              return encodeFunctionData({
-                abi: simulationContract.abi,
-                functionName: 'approveProxyCallWithMeta',
-                args: [
-                  proxy.address,
-                  emptyMetadataChecks,
-                  baseApprovals,
-                  tx.to,
-                  modifiedData,
-                  emptyWithdrawals,
-                ] as const,
-              });
-            } else if (willUsePermitForExecution) {
-              return encodeFunctionData({
-                abi: simulationContract.abi,
-                functionName: 'permitProxyCallWithMeta',
-                args: [
-                  proxy.address,
-                  emptyMetadataChecks,
-                  baseApprovals,
-                  permitSignature ? [permitSignature] : ([] as const),
-                  tx.to,
-                  modifiedData,
-                  emptyWithdrawals,
-                ] as const,
-              });
-            } else {
-              return encodeFunctionData({
-                abi: simulationContract.abi,
-                functionName: 'proxyCallMeta',
-                args: [emptyMetadataChecks, baseApprovals, tx.to, modifiedData, emptyWithdrawals] as const,
-              });
-            }
-          }
-        })();
-
+        // Estimate gas for the original transaction (simpler and more accurate)
         estimatedGas = await publicClient.estimateGas({
           account: address,
-          to: simulationContract.address as `0x${string}`,
-          data: gasEstimationData,
+          to: tx.to as `0x${string}`,
+          data: tx.data as `0x${string}`,
           value: BigInt(tx.value || 0),
         });
       } catch (error) {
