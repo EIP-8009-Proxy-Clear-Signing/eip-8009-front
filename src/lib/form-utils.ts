@@ -128,7 +128,6 @@ export async function populateFormChecks(
         Math.floor((1 - slippage / 100) * 1000000)
       );
 
-      // get gas price from viem
       // change gasUsed to gasLimit
 
       const calcGas = (gasUsed * 125n) / 100n;
