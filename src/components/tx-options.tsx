@@ -557,8 +557,9 @@ export const TxOptions = () => {
       );
 
       // Step 13: Populate form checks
-      populateFormChecks({
+      await populateFormChecks({
         from,
+        chainId,
         to,
         gasUsed,
         txTo: tx.to,
@@ -1085,6 +1086,7 @@ export const TxOptions = () => {
 
           case EMode['pre/post']: {
             if (shouldUseApproveRouter) {
+              console.log("HERE!!!!!!!!!!!!!!!!!");
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
@@ -1098,6 +1100,7 @@ export const TxOptions = () => {
                   withdrawals.map((w) => w.balance),
                 ],
                 value: value,
+                gas: 200_000n,
               });
             } else if (shouldUsePermitRouter) {
               hash = await writeContractAsync({

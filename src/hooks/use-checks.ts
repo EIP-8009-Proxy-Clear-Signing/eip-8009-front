@@ -48,7 +48,7 @@ export type UseChecks = {
 };
 
 export const MIN_SLIPPAGE = 0;
-export const MAX_SLIPPAGE = 30;
+export const MAX_SLIPPAGE = 100;
 export const DEFAULT_SLIPPAGE = 0.001;
 export const DEFAULT_SLIPPAGE_PREPOST = 1.0;
 
