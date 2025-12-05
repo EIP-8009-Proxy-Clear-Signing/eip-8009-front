@@ -556,11 +556,110 @@ export const TxOptions = () => {
         to.token.address === zeroAddress || to.token.address === ethAddress
       );
 
-      // Step 13: Populate form checks
-      populateFormChecks({
+      // Step 13: Estimate gas for the actual contract call
+      setLoadingStep('Estimating gas...');
+      let estimatedGas = 0n;
+      
+      try {
+        // For gas estimation, we just use empty arrays with type assertion
+        const emptyMetadataChecks = [] as const;
+        const emptyWithdrawals = [] as const;
+        
+        const baseApprovals = approvals.map(a => ({ ...a, useTransfer: true }));
+        
+        // Build the encoded data for gas estimation
+        const gasEstimationData = await (async () => {
+          if (mode === EMode.diifs) {
+            if (shouldUseApproveRouter) {
+              return encodeFunctionData({
+                abi: simulationContract.abi,
+                functionName: 'approveProxyCallDiffsWithMeta',
+                args: [
+                  proxy.address,
+                  emptyMetadataChecks,
+                  baseApprovals,
+                  tx.to,
+                  modifiedData,
+                  emptyWithdrawals,
+                ] as const,
+              });
+            } else if (willUsePermitForExecution) {
+              return encodeFunctionData({
+                abi: simulationContract.abi,
+                functionName: 'permitProxyCallDiffsWithMeta',
+                args: [
+                  proxy.address,
+                  emptyMetadataChecks,
+                  baseApprovals,
+                  permitSignature ? [permitSignature] : ([] as const),
+                  tx.to,
+                  modifiedData,
+                  emptyWithdrawals,
+                ] as const,
+              });
+            } else {
+              return encodeFunctionData({
+                abi: simulationContract.abi,
+                functionName: 'proxyCallDiffsMeta',
+                args: [emptyMetadataChecks, baseApprovals, tx.to, modifiedData, emptyWithdrawals] as const,
+              });
+            }
+          } else {
+            // pre/post mode
+            if (shouldUseApproveRouter) {
+              return encodeFunctionData({
+                abi: simulationContract.abi,
+                functionName: 'approveProxyCallWithMeta',
+                args: [
+                  proxy.address,
+                  emptyMetadataChecks,
+                  baseApprovals,
+                  tx.to,
+                  modifiedData,
+                  emptyWithdrawals,
+                ] as const,
+              });
+            } else if (willUsePermitForExecution) {
+              return encodeFunctionData({
+                abi: simulationContract.abi,
+                functionName: 'permitProxyCallWithMeta',
+                args: [
+                  proxy.address,
+                  emptyMetadataChecks,
+                  baseApprovals,
+                  permitSignature ? [permitSignature] : ([] as const),
+                  tx.to,
+                  modifiedData,
+                  emptyWithdrawals,
+                ] as const,
+              });
+            } else {
+              return encodeFunctionData({
+                abi: simulationContract.abi,
+                functionName: 'proxyCallMeta',
+                args: [emptyMetadataChecks, baseApprovals, tx.to, modifiedData, emptyWithdrawals] as const,
+              });
+            }
+          }
+        })();
+
+        estimatedGas = await publicClient.estimateGas({
+          account: address,
+          to: simulationContract.address as `0x${string}`,
+          data: gasEstimationData,
+          value: BigInt(tx.value || 0),
+        });
+      } catch (error) {
+        console.error('Gas estimation failed, using simulation gas:', error);
+        estimatedGas = gasUsed;
+      }
+
+      // Step 14: Populate form checks
+      await populateFormChecks({
         from,
+        chainId,
         to,
-        gasUsed,
+        gasUsed: estimatedGas, // Use estimated gas instead of simulation gas
         txTo: tx.to,
         address,
         slippage: activeSlippage,
@@ -1271,8 +1370,7 @@ export const TxOptions = () => {
             />
             {mode === EMode['pre/post'] && (
               <p className="text-xs text-muted-foreground mt-1">
-                Pre/Post mode requires higher slippage (recommended: 1-3%) due
-                to balance changes between simulation and execution
+                Pre/Post mode requires higher slippage (recommended: 1-3%). With eth amount around 0.01 slippage is recommended to be at lease 10%
               </p>
             )}
             <Accordion type="single" collapsible defaultValue="pre-transfer">
