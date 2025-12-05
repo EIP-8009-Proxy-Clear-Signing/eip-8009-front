@@ -1,7 +1,9 @@
 import { EMode, Check } from '@/hooks/use-checks';
 import { formatBalance, formatToken, formatBalancePrecise } from './utils';
 import { SimulationResult } from './simulation-utils';
-import { zeroAddress } from 'viem';
+import { ethAddress, zeroAddress } from 'viem';
+import { getGasPrice } from '@wagmi/core';
+import { wagmiConfig } from '@/config/wagmi-config';
 
 export interface PopulateFormParams {
   from: SimulationResult['assetChanges'][0];
@@ -15,6 +17,7 @@ export interface PopulateFormParams {
   withSymbol: string;
   withDecimals: number;
   gasUsed: bigint;
+  chainId: number;
   changeApprovalCheck: (index: number, check: Check) => void;
   changeWithdrawalCheck: (index: number, check: Check) => void;
   changeDiffsCheck: (index: number, check: Check) => void;
@@ -26,7 +29,9 @@ export interface PopulateFormParams {
  * Populates form checks with values from simulation results
  * All values come from the MODIFIED simulation for UI consistency
  */
-export function populateFormChecks(params: PopulateFormParams): void {
+export async function populateFormChecks(
+  params: PopulateFormParams
+): Promise<void> {
   const {
     from,
     to,
@@ -39,6 +44,7 @@ export function populateFormChecks(params: PopulateFormParams): void {
     withSymbol,
     withDecimals,
     gasUsed,
+    chainId,
     changeApprovalCheck,
     changeWithdrawalCheck,
     changeDiffsCheck,
@@ -107,13 +113,48 @@ export function populateFormChecks(params: PopulateFormParams): void {
         ),
       });
 
+      const checkForETH = (token: string) => {
+        // return false;
+
+        return token === zeroAddress || token === ethAddress;
+      };
+
+      const isToEth = checkForETH(to.token.address);
+
+      console.log('gasUsed in populateFormChecks:', gasUsed);
+
       // Post-transfer checks: final balances with slippage tolerance
       const toSlippageMultiplier = BigInt(
         Math.floor((1 - slippage / 100) * 1000000)
       );
-      const minExpectedGain = (to.value.diff * toSlippageMultiplier) / 1000000n;
-      const minFinalBalanceTo = to.value.pre + minExpectedGain;
 
+      // get gas price from viem
+      // change gasUsed to gasLimit
+
+      const calcGas = (gasUsed * 125n) / 100n;
+      const gasPrice = await getGasPrice(wagmiConfig, {
+        chainId: chainId as any,
+      });
+      console.log('gasPrice in populateFormChecks:', gasPrice);
+      const gasConst = calcGas * gasPrice;
+      const minExpectedGain = (to.value.diff * toSlippageMultiplier) / 1000000n;
+      let minFinalBalanceTo = to.value.pre + minExpectedGain;
+      if (isToEth) {
+        minFinalBalanceTo -= gasConst;
+      }
+
+      console.log({
+        slippage,
+        toSlippageMultiplier,
+        minExpectedGain,
+        pre: to.value.pre,
+        minFinalBalanceTo,
+        gasUsed,
+        gasConst,
+        calcGas,
+      });
+
+      // if (!isToEth) {
       changePostTransferCheck(0, {
         target: String(address),
         token: formatToken(to.token.symbol, to.token.address),
@@ -122,6 +163,7 @@ export function populateFormChecks(params: PopulateFormParams): void {
           to.token.decimals || 18
         ),
       });
+      // }
 
       const fromSlippageMultiplier = BigInt(
         Math.floor((1 + slippage / 100) * 1000000)
@@ -129,12 +171,14 @@ export function populateFormChecks(params: PopulateFormParams): void {
       const maxExpectedLoss =
         (from.value.diff * fromSlippageMultiplier) / 1000000n;
 
-      // For ETH, subtract gas from the expected balance
-      const isFromEth = from.token.address === zeroAddress;
-      const minFinalBalanceFrom = isFromEth
-        ? from.value.pre + maxExpectedLoss - gasUsed
-        : from.value.pre + maxExpectedLoss;
+      const isFromEth = checkForETH(from.token.address);
+      let minFinalBalanceFrom = from.value.pre + maxExpectedLoss;
 
+      if (isFromEth) {
+        minFinalBalanceFrom -= gasUsed * 1500000000n;
+      }
+
+      // if (!isFromEth) {
       changePostTransferCheck(1, {
         target: String(address),
         token: formatToken(from.token.symbol, from.token.address),
@@ -143,6 +187,7 @@ export function populateFormChecks(params: PopulateFormParams): void {
           from.token.decimals || 18
         ),
       });
+      // }
 
       break;
     }
