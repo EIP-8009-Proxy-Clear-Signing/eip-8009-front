@@ -576,7 +576,7 @@ export const TxOptions = () => {
       // Step 14: Populate form checks
       await populateFormChecks({
         from,
-        chainId,
+        chainId: chainId as any,
         to,
         gasUsed: estimatedGas, // Use estimated gas instead of simulation gas
         txTo: tx.to,
