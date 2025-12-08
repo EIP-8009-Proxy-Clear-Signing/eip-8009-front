@@ -1,20 +1,31 @@
 import { PublicClient } from 'viem';
 
+/**
+ * Represents the result of a transaction simulation
+ * Contains asset changes (token balances) and execution results
+ */
 export interface SimulationResult {
+  /** Array of token balance changes detected during simulation */
   assetChanges: ReadonlyArray<{
     token: {
       address: string;
       symbol?: string;
       decimals?: number;
     };
+    /** Balance change: diff (change amount), pre (before), post (after) */
     value: { diff: bigint; pre: bigint; post: bigint };
   }>;
+  /** Execution results for each call in the simulation */
   results: ReadonlyArray<{
     status: 'success' | 'failure';
     gasUsed?: bigint;
   }>;
 }
 
+/**
+ * Parameters for simulating the original transaction
+ * Used to validate the user's intent before modification
+ */
 export interface OriginalSimulationParams {
   publicClient: PublicClient;
   address: `0x${string}`;
@@ -27,6 +38,10 @@ export interface OriginalSimulationParams {
   retryDelay?: number;
 }
 
+/**
+ * Parameters for simulating the modified (proxy) transaction
+ * Used to get accurate balance changes for UI display
+ */
 export interface ModifiedSimulationParams {
   publicClient: PublicClient;
   address: `0x${string}`;
@@ -37,8 +52,29 @@ export interface ModifiedSimulationParams {
 }
 
 /**
- * Simulates the ORIGINAL Uniswap transaction for security verification
- * May fail (expected) because Permit2 validation happens on-chain
+ * Simulates the ORIGINAL transaction to validate user intent and extract approval amounts
+ *
+ * This is Phase 1 of the two-phase simulation system. It attempts to simulate the
+ * original Uniswap transaction as-is, which may fail due to Permit2 validation
+ * (expected behavior). The goal is to:
+ * - Verify the transaction structure is valid
+ * - Extract the approval amount needed for the swap
+ * - Ensure the transaction intent matches user expectations
+ *
+ * @param params - Simulation parameters including transaction details
+ * @returns Promise resolving to success status and optional simulation result
+ *
+ * @example
+ * const { success, result } = await simulateOriginalTransaction({
+ *   publicClient,
+ *   address: userAddress,
+ *   tx: { to: uniswapRouter, data: swapCalldata, value: 0 }
+ * });
+ *
+ * if (success && result) {
+ *   // Extract approval amount from asset changes
+ *   const approvalAmount = result.assetChanges[0].value.diff;
+ * }
  */
 export async function simulateOriginalTransaction(
   params: OriginalSimulationParams
@@ -94,8 +130,34 @@ export async function simulateOriginalTransaction(
 }
 
 /**
- * Simulates the MODIFIED transaction through proxy
- * Returns REAL asset changes that will be shown to the user
+ * Simulates the MODIFIED transaction through the proxy contract
+ *
+ * This is Phase 2 of the two-phase simulation system. It simulates the transaction
+ * after calldata modification, routing through the proxy contract. This simulation:
+ * - Uses modified calldata with proxy address substitutions
+ * - Returns ACCURATE asset changes that will be shown to the user
+ * - Includes gas estimation for the actual execution
+ * - Validates that the proxy routing works correctly
+ *
+ * The returned balance changes are used to populate the UI and balance checks.
+ *
+ * @param params - Simulation parameters including proxy contract and modified data
+ * @returns Promise resolving to simulation result or null if failed
+ *
+ * @example
+ * const simRes = await simulateModifiedTransaction({
+ *   publicClient,
+ *   address: userAddress,
+ *   simulationContract: { address: permitRouter },
+ *   simulationData: encodedProxyCall,
+ *   txValue: 0n
+ * });
+ *
+ * if (simRes) {
+ *   const { from, to } = extractAssetChanges(simRes);
+ *   console.log(`Spending ${from.value.diff} ${from.token.symbol}`);
+ *   console.log(`Receiving ${to.value.diff} ${to.token.symbol}`);
+ * }
  */
 export async function simulateModifiedTransaction(
   params: ModifiedSimulationParams
@@ -139,7 +201,13 @@ export async function simulateModifiedTransaction(
 }
 
 /**
- * Validates simulation result
+ * Validates that a simulation completed successfully
+ *
+ * Checks the simulation result to ensure the transaction would execute
+ * without reverting. Returns false if the simulation indicates failure.
+ *
+ * @param simRes - The simulation result to validate
+ * @returns true if simulation was successful, false otherwise
  */
 export function validateSimulationResult(simRes: SimulationResult): boolean {
   if (simRes.results[0].status !== 'success') {
@@ -153,7 +221,29 @@ export function validateSimulationResult(simRes: SimulationResult): boolean {
 }
 
 /**
- * Extracts input and output tokens from simulation result
+ * Extracts token input/output and gas information from simulation
+ *
+ * Analyzes the asset changes array to identify:
+ * - `from`: Token being spent (negative diff)
+ * - `to`: Token being received (positive diff)
+ * - `gasUsed`: Estimated gas consumption
+ *
+ * This information is used to:
+ * - Populate balance checks with expected changes
+ * - Display swap details to the user
+ * - Calculate gas fees for ETH balance validation
+ *
+ * @param simRes - The simulation result containing asset changes
+ * @returns Object with from token, to token, and gas used
+ *
+ * @example
+ * const { from, to, gasUsed } = extractAssetChanges(simRes);
+ *
+ * // from.token.address: "0x..." (USDC)
+ * // from.value.diff: -1000000n (spending 1 USDC)
+ * // to.token.address: "0x000..." (ETH)
+ * // to.value.diff: 500000000000000n (receiving 0.0005 ETH)
+ * // gasUsed: 200000n
  */
 export function extractAssetChanges(simRes: SimulationResult): {
   from: SimulationResult['assetChanges'][0] | undefined;
