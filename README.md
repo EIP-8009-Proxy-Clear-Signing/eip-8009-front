@@ -2,6 +2,8 @@
 
 A secure DeFi transaction wrapper that intercepts, modifies, and validates transactions before execution. This frontend implements the EIP-8009 Balance Proxy standard, enabling seamless integration with existing DeFi protocols (like Uniswap) while adding comprehensive balance checks and approval management.
 
+**Documentation**: [Docs](https://erc8009.xyz/) - Official EIP-8009 Proxy Standard Documentation
+
 ## 🎯 Overview
 
 This application acts as a **Safe Apps SDK-compatible interface** that wraps DeFi transactions (currently optimized for Uniswap Universal Router) with security checks and balance validations through a proxy contract. It modifies transaction calldata to redirect token flows through the proxy while preserving the original transaction intent.
@@ -394,11 +396,3 @@ Enable detailed logs by checking the browser console:
 // Balance checks
 { slippage, minExpectedGain, pre, minFinalBalanceTo, gasUsed, gasConst }
 ```
-
----
-
-## 📚 Related Repositories
-
-- **Contracts**: [eip-8009-contracts](../eip-8009-contracts) - Proxy smart contracts
-- **Universal Router**: Uniswap's Universal Router for multi-protocol swaps
-- **Permit2**: Uniswap's signature-based approval system
