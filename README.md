@@ -14,8 +14,7 @@ This application acts as a **Safe Apps SDK-compatible interface** that wraps DeF
 - **Balance Validation**: Enforces pre/post-transaction balance checks
 - **Approval Management**: Handles ERC-20 approvals, transfers, and EIP-2612 permits
 - **Multi-Mode Support**: Diffs mode (balance changes) and Pre/Post mode (absolute balances)
-- **Gas Estimation**: Accurate gas calculation for ETH balance checks
-- **Safe Integration**: Compatible with Safe (Gnosis Safe) multisig wallets
+- **Safe Integration**: Compatible with Safe multisig wallets
 
 ---
 
@@ -68,7 +67,7 @@ const { approvalAmount, inputTokenAddress } = await determineApprovalAmount({
 **Phase 2: Calldata Modification**
 - For Uniswap Universal Router, modifies the calldata to work with proxy
 - Replaces user address with proxy address in recipient fields
-- Modifies V3/V4 swap parameters to use proxy as payer
+- Modifies V2/V3/V4 swap parameters to use proxy as payer
 
 ```typescript
 // Step 3: Modify transaction calldata
@@ -276,7 +275,7 @@ src/
 | Module | Purpose |
 |--------|---------|
 | `simulation-utils.ts` | Simulates original & modified transactions, extracts balance changes |
-| `uniswap-router.ts` | Parses and modifies Universal Router calldata (V3/V4 swaps) |
+| `uniswap-router.ts` | Parses and modifies Universal Router calldata (V2/V3/V4 swaps) |
 | `approval-utils.ts` | Manages ERC-20 approvals and EIP-2612 permits |
 | `form-utils.ts` | Populates balance checks with slippage, handles ETH gas accounting |
 | `simulation-data-builder.ts` | Encodes proxy function calls for different routers |
@@ -289,8 +288,8 @@ src/
 
 The application uses **dual slippage** based on mode:
 
-- **Diffs Mode**: 0.5% default (snapshots balance at execution time)
-- **Pre/Post Mode**: 3.0% default (accounts for pool state drift between simulation and execution)
+- **Diffs Mode**: 0.001% default (snapshots balance at execution time)
+- **Pre/Post Mode**: 1.0% default (accounts for pool state drift between simulation and execution)
 
 Higher slippage in Pre/Post mode is necessary because:
 - Simulation captures balance at block N
@@ -355,7 +354,7 @@ The app will be available at `http://localhost:5173`
 
 1. **Connect Wallet**: Click "Connect" in the top-right
 2. **Enter DApp URL**: Default is `https://app.uniswap.org/swap`
-3. **Configure Slippage**: Adjust in settings (0.5% for diffs, 3% for pre/post recommended)
+3. **Configure Slippage**: Adjust in settings (0.0001% for diffs, 1% for pre/post recommended)
 4. **Execute Swap**: 
    - Perform swap in embedded Uniswap
    - Review balance checks in modal
