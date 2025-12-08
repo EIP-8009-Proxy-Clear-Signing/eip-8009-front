@@ -1,18 +1,73 @@
 import { decodeAbiParameters, decodeFunctionData, Abi } from 'viem';
 
+/**
+ * Extracted swap information from Universal Router calldata
+ */
 export interface SwapInfo {
+  /** Address of the input token being swapped */
   inputToken: `0x${string}`;
+  /** Amount of input token (0 for exact output swaps) */
   inputAmount: bigint;
+  /** Address of the output token (optional) */
   outputToken?: `0x${string}`;
 }
 
+/**
+ * Uniswap V4 action identifiers used in swap extraction
+ */
 const V4_ACTIONS = {
+  /** Transfer tokens from user to V4 PoolManager */
   SETTLE: 0x0b,
+  /** Transfer tokens from V4 PoolManager to user */
   TAKE: 0x0e,
 } as const;
 
 /**
- * Extract token and amount information from Universal Router calldata
+ * Extracts swap information from Universal Router calldata
+ *
+ * This function parses Universal Router transactions to determine:
+ * - Which token is being swapped (input token)
+ * - How much is being swapped (input amount)
+ *
+ * **Why We Need This**:
+ * The proxy system needs to know the input token and amount to:
+ * 1. Determine approval requirements
+ * 2. Pre-transfer tokens to the router
+ * 3. Validate balance sufficiency
+ *
+ * **Supported Swap Types**:
+ * - **V4 Swaps** (0x10): Uniswap V4 with hooks
+ * - **V3 Swaps** (0x00, 0x01): V3 concentrated liquidity
+ * - **V2 Swaps** (0x08, 0x09): V2 AMM pools
+ *
+ * **Priority Order** (tries in sequence):
+ * 1. V4_SWAP - Extracts from SETTLE action
+ * 2. V3_SWAP - Extracts from swap parameters
+ * 3. V2_SWAP - Extracts from path array
+ *
+ * **Fallback Behavior**:
+ * If extraction fails or no swap commands found, returns null.
+ * Caller should handle this case (e.g., use full balance for approval).
+ *
+ * @param txData - Universal Router transaction calldata
+ * @param routerAbi - Universal Router contract ABI
+ * @returns Swap info with input token and amount, or null if extraction fails
+ *
+ * @example
+ * // Example: V3 swap (USDC → ETH)
+ * const info = extractSwapInfo(txData, routerAbi);
+ * // info: {
+ * //   inputToken: "0xA0b86991..." (USDC address),
+ * //   inputAmount: 1000000n (1 USDC with 6 decimals)
+ * // }
+ *
+ * @example
+ * // Example: V4 swap with hooks
+ * const info = extractSwapInfo(txData, routerAbi);
+ * // info: {
+ * //   inputToken: "0xC02aaA39..." (WETH address),
+ * //   inputAmount: 1000000000000000000n (1 WETH)
+ * // }
  */
 export function extractSwapInfo(
   txData: string,
@@ -71,6 +126,37 @@ export function extractSwapInfo(
   }
 }
 
+/**
+ * Extracts swap information from Uniswap V4 swap command
+ *
+ * **V4 Architecture**:
+ * V4 swaps use a "plan" structure with:
+ * - **actions**: Array of action IDs (SWAP, SETTLE, TAKE, etc.)
+ * - **params**: Encoded parameters for each action
+ *
+ * **SETTLE Action Structure**:
+ * - currency (address): Token being settled
+ * - amount (uint256): Amount to settle (0 = use open delta)
+ * - payerIsUser (bool): Whether user pays or router pays
+ *
+ * **Special V4 Amounts**:
+ * - `0`: Use contract balance / open delta from previous actions
+ * - Non-zero: Explicit amount to settle
+ *
+ * **Why SETTLE?**:
+ * SETTLE actions transfer input tokens from user → PoolManager.
+ * This tells us which token is being spent and how much.
+ *
+ * @param v4Input - Encoded V4 plan (actions + params)
+ * @returns Swap info with input token from SETTLE action, or null if not found
+ *
+ * @example
+ * const info = extractV4SwapInfo(v4PlanBytes);
+ * // info: {
+ * //   inputToken: "0xA0b86991..." (USDC),
+ * //   inputAmount: 1000000n
+ * // }
+ */
 function extractV4SwapInfo(v4Input: string): SwapInfo | null {
   try {
     const planDecoded = decodeAbiParameters(
@@ -132,6 +218,37 @@ function extractV4SwapInfo(v4Input: string): SwapInfo | null {
   }
 }
 
+/**
+ * Extracts swap information from Uniswap V3 swap command
+ *
+ * **V3 Swap Parameter Structure** (ABI-encoded):
+ * - recipient (address): Who receives output tokens - 32 bytes
+ * - amountIn (uint256): Input token amount - 32 bytes
+ * - amountOutMin (uint256): Minimum output (slippage protection) - 32 bytes
+ * - path (bytes): Encoded swap path with pool fees - dynamic
+ * - payerIsUser (bool): Who provides input tokens - 32 bytes
+ *
+ * **V3 Path Format**:
+ * The path is encoded as: `[token0][fee0][token1][fee1][token2]...`
+ * - First 20 bytes (40 hex chars) = input token address
+ * - Next 3 bytes = pool fee tier
+ * - Next 20 bytes = intermediate/output token
+ *
+ * **Extraction Process**:
+ * 1. Read amountIn from bytes 66-130
+ * 2. Find path offset to locate path data
+ * 3. Extract first 20 bytes of path = input token
+ *
+ * @param v3Input - Encoded V3 swap parameters
+ * @returns Swap info with input token and amount, or null if decode fails
+ *
+ * @example
+ * const info = extractV3SwapInfo(v3SwapBytes);
+ * // info: {
+ * //   inputToken: "0xA0b86991..." (USDC - first token in path),
+ * //   inputAmount: 1000000n (amountIn parameter)
+ * // }
+ */
 function extractV3SwapInfo(v3Input: string): SwapInfo | null {
   try {
     // V3 swap structure: (address recipient, uint256 amountIn, uint256 amountOutMin, bytes path, bool payerIsUser)
@@ -164,6 +281,48 @@ function extractV3SwapInfo(v3Input: string): SwapInfo | null {
   }
 }
 
+/**
+ * Extracts swap information from Uniswap V2 swap command
+ *
+ * **V2 Swap Parameter Structure** (ABI-encoded):
+ * - recipient (address): Who receives output tokens - 32 bytes
+ * - amountIn (uint256): Input token amount - 32 bytes
+ * - amountOutMin (uint256): Minimum output (slippage protection) - 32 bytes
+ * - path (address[]): Array of token addresses - dynamic array
+ * - payerIsUser (bool): Who provides input tokens - 32 bytes
+ *
+ * **V2 Path Format**:
+ * Unlike V3 (which encodes fees), V2 uses a simple address array:
+ * - `[tokenA, tokenB, tokenC]` for multi-hop swaps
+ * - First element = input token
+ * - Last element = output token
+ * - Intermediate elements = hop tokens
+ *
+ * **Extraction Process**:
+ * 1. Read amountIn from bytes 66-130
+ * 2. Find path offset to locate array data
+ * 3. Read array length
+ * 4. Extract first address from array = input token
+ *
+ * @param v2Input - Encoded V2 swap parameters
+ * @returns Swap info with input token and amount, or null if decode fails
+ *
+ * @example
+ * // Single-hop swap: USDC → WETH
+ * const info = extractV2SwapInfo(v2SwapBytes);
+ * // info: {
+ * //   inputToken: "0xA0b86991..." (USDC - first in path array),
+ * //   inputAmount: 1000000n (amountIn parameter)
+ * // }
+ *
+ * @example
+ * // Multi-hop swap: DAI → USDC → WETH
+ * const info = extractV2SwapInfo(v2SwapBytes);
+ * // info: {
+ * //   inputToken: "0x6B175474..." (DAI - first in path [DAI, USDC, WETH]),
+ * //   inputAmount: 1000000000000000000n
+ * // }
+ */
 function extractV2SwapInfo(v2Input: string): SwapInfo | null {
   try {
     // V2 swap structure: (address recipient, uint256 amountIn, uint256 amountOutMin, address[] path, bool payerIsUser)
