@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { Methods } from "@safe-global/safe-apps-sdk";
+import SafeAppsSDK from "@safe-global/safe-apps-sdk";
 
 interface SafeInfo {
   safeAddress: string;
@@ -10,7 +10,7 @@ interface SafeInfo {
 }
 
 interface SafeAppContextType {
-  safe: any | null;
+  safe: SafeAppsSDK | null;
   safeInfo: SafeInfo | null;
   isLoading: boolean;
   error: string | null;
@@ -32,7 +32,7 @@ interface SafeAppProviderProps {
 export const SafeAppProvider: React.FC<SafeAppProviderProps> = ({
   children,
 }) => {
-  const [safe, setSafe] = useState<any | null>(null);
+  const [safe, setSafe] = useState<SafeAppsSDK | null>(null);
   const [safeInfo, setSafeInfo] = useState<SafeInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,115 +40,35 @@ export const SafeAppProvider: React.FC<SafeAppProviderProps> = ({
   useEffect(() => {
     const initSafeApp = async () => {
       try {
+        // console.log('[SafeApp] Initializing Safe App Provider');
+        // console.log('[SafeApp] window.parent !== window:', window.parent !== window);
+        
         if (window.parent !== window) {
-          const safeAppInterface = {
-            safe: {
-              getInfo: async (): Promise<SafeInfo> => {
-                return new Promise((resolve) => {
-                  const messageId = Date.now();
-
-                  const handleMessage = (event: MessageEvent) => {
-                    if (
-                      event.data?.id === messageId &&
-                      event.data?.method === Methods.getSafeInfo
-                    ) {
-                      window.removeEventListener("message", handleMessage);
-                      resolve(event.data.data);
-                    }
-                  };
-
-                  window.addEventListener("message", handleMessage);
-                  window.parent.postMessage(
-                    {
-                      id: messageId,
-                      method: Methods.getSafeInfo,
-                      params: {},
-                    },
-                    "*",
-                  );
-                });
-              },
-            },
-            txs: {
-              send: async (params: any) => {
-                return new Promise((resolve, reject) => {
-                  const messageId = Date.now();
-
-                  const handleMessage = (event: MessageEvent) => {
-                    if (
-                      event.data?.id === messageId &&
-                      event.data?.method === Methods.sendTransactions
-                    ) {
-                      window.removeEventListener("message", handleMessage);
-                      if (event.data.success) {
-                        resolve(event.data.data);
-                      } else {
-                        reject(new Error(event.data.error));
-                      }
-                    }
-                  };
-
-                  window.addEventListener("message", handleMessage);
-
-                  window.parent.postMessage(
-                    {
-                      id: messageId,
-                      method: Methods.sendTransactions,
-                      params,
-                    },
-                    "*",
-                  );
-                });
-              },
-            },
-            wallet: {
-              signMessage: async (params: any) => {
-                return new Promise((resolve, reject) => {
-                  const messageId = Date.now();
-
-                  const handleMessage = (event: MessageEvent) => {
-                    if (
-                      event.data?.id === messageId &&
-                      event.data?.method === Methods.signMessage
-                    ) {
-                      window.removeEventListener("message", handleMessage);
-                      if (event.data.success) {
-                        resolve(event.data.data);
-                      } else {
-                        reject(new Error(event.data.error));
-                      }
-                    }
-                  };
-
-                  window.addEventListener("message", handleMessage);
-
-                  window.parent.postMessage(
-                    {
-                      id: messageId,
-                      method: Methods.signMessage,
-                      params,
-                    },
-                    "*",
-                  );
-                });
-              },
-            },
-          };
-
-          setSafe(safeAppInterface);
+          // console.log('[SafeApp] Running in iframe context - initializing Safe Apps SDK');
+          
+          // Use the official Safe Apps SDK
+          const sdk = new SafeAppsSDK();
+          // console.log('[SafeApp] Safe Apps SDK instance created');
+          
+          setSafe(sdk);
+          
           try {
-            const info = await safeAppInterface.safe.getInfo();
+            // console.log('[SafeApp] Fetching Safe info via SDK...');
+            const info = await sdk.safe.getInfo();
+            // console.log('[SafeApp] Safe info received via SDK:', info);
             setSafeInfo(info);
           } catch (err) {
-            console.log(err);
+            console.error('[SafeApp] Failed to get Safe info via SDK:', err);
+            setError(err instanceof Error ? err.message : 'Failed to get Safe info');
           }
 
           setIsLoading(false);
         } else {
+          // console.log('[SafeApp] Not running in iframe - skipping Safe setup');
           setIsLoading(false);
         }
       } catch (err) {
-        console.error("Failed to initialize:", err);
+        console.error("[SafeApp] Failed to initialize:", err);
         setError(err instanceof Error ? err.message : "Failed to initialize");
         setIsLoading(false);
       }

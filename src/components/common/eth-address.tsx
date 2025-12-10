@@ -15,10 +15,10 @@ interface EthAddressProps {
 }
 
 export function EthAddress({ address }: EthAddressProps) {
+  const [copied, setCopied] = useState(false);
   if (!address) return null;
 
   const shortAddress = `${address.slice(0, 6)}…${address.slice(-4)}`;
-  const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
     try {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   useAccount,
   usePublicClient,
@@ -34,7 +34,7 @@ export function ImpersonatorIframe() {
   const { sendTransactionAsync } = useSendTransaction();
   const { safeInfo, safe } = useSafeApp();
 
-  const sendMessageToIFrame = ({
+  const sendMessageToIFrame = useCallback(({
     eventID,
     error,
     data,
@@ -52,12 +52,28 @@ export function ImpersonatorIframe() {
         data,
       };
 
-      iframeRef.current?.contentWindow?.postMessage(
-        message,
-        deferredUrl! || '*'
-      );
+      // console.log('[ImpersonatorIframe] sendMessageToIFrame called:', {
+      //   eventID,
+      //   hasData: !!data,
+      //   hasError: !!error,
+      //   message,
+      //   targetOrigin: deferredUrl || '*',
+      //   hasContentWindow: !!iframeRef.current?.contentWindow,
+      // });
+
+      try {
+        iframeRef.current?.contentWindow?.postMessage(
+          message,
+          deferredUrl! || '*'
+        );
+        // console.log('[ImpersonatorIframe] Message posted successfully');
+      } catch (err) {
+        console.error('[ImpersonatorIframe] Failed to post message:', err);
+      }
+    } else {
+      console.error('[ImpersonatorIframe] Cannot send message - no iframeRef');
     }
-  };
+  }, [deferredUrl]);
 
   const originIsUniswap = (origin: string) => {
     const uniswapOrigins = [
@@ -107,32 +123,46 @@ export function ImpersonatorIframe() {
       const params = event.data?.params;
       const method = event.data?.method;
 
+      // console.log('[ImpersonatorIframe] Received message:', {
+      //   eventID,
+      //   method,
+      //   hasParams: !!params,
+      //   origin: event.origin,
+      // });
+
       switch (method) {
         case Methods.getSafeInfo: {
-          console.log('< < < known method:', 'getSafeInfo', event);
+          // console.log('[ImpersonatorIframe] getSafeInfo request received');
+          // console.log('[ImpersonatorIframe] Current safeInfo:', safeInfo);
+          // console.log('[ImpersonatorIframe] Current address:', address);
+          // console.log('[ImpersonatorIframe] Current chainId:', chainId);
 
           if (safeInfo) {
+            // console.log('[ImpersonatorIframe] Sending actual safeInfo');
             sendMessageToIFrame({
               eventID,
               data: safeInfo,
             });
           } else {
+            // console.log('[ImpersonatorIframe] Sending fallback safeInfo');
+            const fallbackInfo = {
+              safeAddress: address,
+              chainId,
+              owners: [address],
+              threshold: 1,
+              isReadOnly: false,
+            };
+            // console.log('[ImpersonatorIframe] Fallback data:', fallbackInfo);
             sendMessageToIFrame({
               eventID,
-              data: {
-                safeAddress: address,
-                chainId,
-                owners: [address],
-                threshold: 1,
-                isReadOnly: false,
-              },
+              data: fallbackInfo,
             });
           }
           return;
         }
 
         case Methods.rpcCall: {
-          console.log('< < < known method:', 'rpcCall', event);
+          // console.log('< < < known method:', 'rpcCall', event);
           try {
             const data = await walletClient.request({
               method: params.call,
@@ -154,64 +184,103 @@ export function ImpersonatorIframe() {
             return;
           }
           console.log('< < < known method:', 'sendTransactions', event);
+          console.log('sendTransactions > safe mode:', !!safe, 'safeInfo:', !!safeInfo);
+          console.log('sendTransactions > origin:', event.origin, 'isUniswap:', originIsUniswap(event.origin));
+          
           try {
             const data = [];
 
-            console.log(`sendTransactions > tx length >`, params.txs);
+            console.log(`sendTransactions > tx length >`, params.txs.length);
 
             for (let q = 0; q < params.txs.length; q++) {
               const tx = params.txs[q];
+              console.log(`sendTransactions > processing tx ${q}:`, {
+                to: tx.to,
+                value: tx.value,
+                dataLength: tx.data?.length,
+                isApproval: tx.data?.includes('095ea7b3'),
+              });
 
-              if (safe && safeInfo) {
-                try {
-                  const result = await safe.txs.send({
-                    txs: [tx],
-                  });
-                  data.push(result.safeTxHash);
-                } catch (error) {
-                  console.error('Safe transaction failed:', error);
-                  throw error;
-                }
-              } else {
-                if (tx.data.includes('095ea7b3')) {
+              // Handle approvals directly without going through the modal
+              const isApproval = tx.data.includes('095ea7b3');
+              
+              if (isApproval) {
+                console.log(`sendTransactions > Direct approval tx ${q} (bypassing modal)`);
+                
+                if (safe && safeInfo) {
+                  // Safe mode: Send approval to Safe for multi-sig
+                  console.log(`sendTransactions > Sending approval to Safe`);
+                  try {
+                    const result = await safe.txs.send({
+                      txs: [tx],
+                    });
+                    console.log(`sendTransactions > Safe approval result:`, result);
+                    
+                    if (!result.safeTxHash) {
+                      console.error(`sendTransactions > No safeTxHash returned for approval`);
+                      throw new Error('No safeTxHash returned from Safe');
+                    }
+                    
+                    data.push(result.safeTxHash);
+                    console.log(`sendTransactions > Added approval safeTxHash:`, result.safeTxHash);
+                  } catch (error) {
+                    console.error(`sendTransactions > Safe approval failed:`, error);
+                    throw error;
+                  }
+                } else {
+                  // Regular wallet: Send approval directly
+                  console.log(`sendTransactions > Sending approval via regular wallet`);
                   const hash = await sendTransactionAsync({
                     to: tx.to as `0x${string}`,
                     value: BigInt(tx.value),
                     data: tx.data,
                   });
+                  console.log(`sendTransactions > Approval hash:`, hash);
                   data.push(hash);
                   try {
                     await publicClient.waitForTransactionReceipt({
                       hash,
                     });
+                    console.log(`sendTransactions > Approval confirmed`);
                   } catch (error) {
-                    console.error(error);
+                    console.error(`sendTransactions > Approval wait failed:`, error);
                   }
-                  continue;
                 }
-
-                console.log(`sendTransactions > tx id ${q} >`);
-                const hash = await openModal(tx);
-                data.push(hash);
+                continue;
               }
+
+              // All non-approval transactions go through the modal
+              // The modal will handle Safe vs regular wallet logic
+              console.log(`sendTransactions > Opening modal for tx ${q}`);
+              const hash = await openModal(tx);
+              console.log(`sendTransactions > Modal returned hash:`, hash);
+              data.push(hash);
             }
 
+            console.log(`sendTransactions > All txs processed. Data array:`, data);
+            console.log(`sendTransactions > Preparing response for origin:`, event.origin);
+
             if (originIsUniswap(event.origin)) {
+              const responseData = { safeTxHash: data[0] };
+              console.log(`sendTransactions > Sending Uniswap-format response:`, responseData);
               sendMessageToIFrame({
                 eventID,
-                data: { safeTxHash: data[0] },
+                data: responseData,
               });
 
               return;
             }
 
+            console.log(`sendTransactions > Sending standard response:`, data[0]);
             sendMessageToIFrame({
               eventID,
               data: data[0],
             });
             return;
           } catch (error) {
-            console.log('event > sendTransactions > error', error);
+            console.error('sendTransactions > CAUGHT ERROR:', error);
+            console.error('sendTransactions > Error type:', error?.constructor?.name);
+            console.error('sendTransactions > Error message:', error instanceof Error ? error.message : 'Unknown');
 
             sendMessageToIFrame({ eventID, error });
             return;
@@ -275,6 +344,8 @@ export function ImpersonatorIframe() {
     publicClient,
     safe,
     safeInfo,
+    sendMessageToIFrame,
+    sendTransactionAsync,
   ]);
 
   return (

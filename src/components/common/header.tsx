@@ -26,7 +26,7 @@ export const Header = () => {
             onCheckedChange={setUsePermitRouter}
           />
           <Label htmlFor="permit-router" className="cursor-pointer text-sm">
-            Use Permit (EIP-2612)
+            Use Permit (EIP-2612) if available
           </Label>
         </div>
       )}

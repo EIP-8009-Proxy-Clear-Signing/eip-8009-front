@@ -10,7 +10,7 @@ export function Account() {
   const { disconnect } = useDisconnect();
   const { safeInfo } = useSafeApp();
   const isInSafeContext = window.parent !== window || safeInfo;
-
+  
   const uiAddress = isInSafeContext ? safeInfo?.safeAddress : address;
 
   return (
