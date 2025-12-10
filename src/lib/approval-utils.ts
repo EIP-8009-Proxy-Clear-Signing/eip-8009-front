@@ -4,6 +4,7 @@ import {
   erc20Abi,
   ethAddress,
   zeroAddress,
+  encodeFunctionData,
 } from 'viem';
 import { toast } from 'sonner';
 import {
@@ -13,6 +14,7 @@ import {
 } from './permit-utils';
 import { SimulationResult } from './simulation-utils';
 import { extractSwapInfo } from './extract-swap-info';
+import SafeAppsSDK from 'node_modules/@safe-global/safe-apps-sdk/dist/types/sdk';
 
 /**
  * Parameters for determining the approval amount needed for a swap
@@ -308,6 +310,8 @@ export interface RequestStandardApprovalParams {
   address: `0x${string}`;
   /** Function to check if operation was aborted */
   checkAborted: () => void;
+  isSafeWallet: boolean;
+  safe: SafeAppsSDK | null;
 }
 
 /**
@@ -355,6 +359,8 @@ export async function requestStandardApproval(
     walletClient,
     address,
     checkAborted,
+    isSafeWallet,
+    safe,
   } = params;
 
   console.log('Requesting standard approval...');
@@ -366,32 +372,63 @@ export async function requestStandardApproval(
   });
 
   try {
-    const hash = await walletClient.writeContract({
-      abi: erc20Abi,
-      address: inputTokenAddress,
-      functionName: 'approve',
-      args: [targetContract.address, approvalAmount],
-      account: address,
-      chain: null,
-    });
+    if (isSafeWallet && safe) {
+      // Safe wallet: Queue approval transaction in Safe multi-sig
+      console.log('Sending approval transaction to Safe for multi-sig');
 
-    checkAborted();
+      const approvalTx = {
+        to: inputTokenAddress,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [targetContract.address, approvalAmount],
+        }),
+        value: '0',
+      };
 
-    console.log('Waiting for approval transaction:', hash);
-    toast.info('Waiting for approval transaction...', {
-      duration: 5000,
-    });
+      const result = await safe.txs.send({
+        txs: [approvalTx],
+      });
 
-    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      checkAborted();
 
-    checkAborted();
+      if (!result.safeTxHash) {
+        throw new Error('No safeTxHash returned from Safe approval');
+      }
 
-    if (receipt.status === 'reverted') {
-      throw new Error('Approval transaction reverted');
+      console.log('Approval queued in Safe:', result.safeTxHash);
+      toast.success(`${tokenSymbol} approval queued in Safe for signing!`, {
+        duration: 5000,
+      });
+    } else {
+      // Plain wallet: Send approval transaction directly
+      const hash = await walletClient.writeContract({
+        abi: erc20Abi,
+        address: inputTokenAddress,
+        functionName: 'approve',
+        args: [targetContract.address, approvalAmount],
+        account: address,
+        chain: null,
+      });
+
+      checkAborted();
+
+      console.log('Waiting for approval transaction:', hash);
+      toast.info('Waiting for approval transaction...', {
+        duration: 5000,
+      });
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+      checkAborted();
+
+      if (receipt.status === 'reverted') {
+        throw new Error('Approval transaction reverted');
+      }
+
+      console.log('Approval confirmed');
+      toast.success(`${tokenSymbol} approved successfully!`);
     }
-
-    console.log('Approval confirmed');
-    toast.success(`${tokenSymbol} approved successfully!`);
   } catch (error) {
     console.error('Approval failed:', error);
     toast.error('Approval failed!');
@@ -421,6 +458,8 @@ export interface HandleApprovalParams {
   permitSignaturesRef: React.MutableRefObject<Map<string, PermitData>>;
   /** Function to check if operation was aborted */
   checkAborted: () => void;
+  isSafeWallet: boolean;
+  safe: SafeAppsSDK | null;
 }
 
 /**
@@ -479,7 +518,11 @@ export interface HandleApprovalParams {
  */
 export async function handleApprovalFlow(
   params: HandleApprovalParams
-): Promise<{ permitSignature: PermitData | null; willUsePermit: boolean }> {
+): Promise<{
+  permitSignature: PermitData | null;
+  willUsePermit: boolean;
+  approvalSent: boolean; // New: indicates if approval tx was sent (for Safe)
+}> {
   const {
     inputTokenAddress,
     approvalAmount,
@@ -491,6 +534,8 @@ export async function handleApprovalFlow(
     usePermitRouter,
     permitSignaturesRef,
     checkAborted,
+    isSafeWallet,
+    safe,
   } = params;
 
   checkAborted();
@@ -523,7 +568,7 @@ export async function handleApprovalFlow(
         permitSignaturesRef,
         checkAborted,
       });
-      return { permitSignature, willUsePermit: true };
+      return { permitSignature, willUsePermit: true, approvalSent: false };
     } else {
       // Use standard approval
       await requestStandardApproval({
@@ -535,11 +580,17 @@ export async function handleApprovalFlow(
         walletClient,
         address,
         checkAborted,
+        isSafeWallet,
+        safe,
       });
-      return { permitSignature: null, willUsePermit: false };
+      return {
+        permitSignature: null,
+        willUsePermit: false,
+        approvalSent: true,
+      };
     }
   } else {
     console.log('Sufficient allowance already exists');
-    return { permitSignature: null, willUsePermit: false };
+    return { permitSignature: null, willUsePermit: false, approvalSent: false };
   }
 }

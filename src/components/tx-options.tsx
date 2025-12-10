@@ -245,6 +245,7 @@ export const TxOptions = () => {
     closeModal,
     tx,
     resolve,
+    reject,
     hideModal,
     isAdvanced,
     toggleAdvanced,
@@ -431,10 +432,41 @@ export const TxOptions = () => {
           usePermitRouter,
           permitSignaturesRef,
           checkAborted,
+          isSafeWallet: !!(safe && safeInfo),
+          safe,
         });
 
         permitSignature = approvalResult.permitSignature;
         willUsePermitForExecution = approvalResult.willUsePermit;
+
+        // For Safe wallets: If approval was sent to Safe (not permit),
+        // close modal and instruct user to complete approval before retrying swap
+        if (safe && safeInfo && approvalResult.approvalSent) {
+          console.log('Safe wallet: Approval queued, closing modal');
+          
+          // Close modal and reset state
+          resetCheckState();
+          
+          // Show long toast with instructions
+          toast.info(
+            'Token approval queued in Safe wallet. Please sign the approval transaction in Safe, then restart the swap.',
+            {
+              duration: 1000000,
+              position: 'top-center',
+              closeButton: true,
+              action: {
+                label: 'View in Safe',
+                onClick: () =>
+                  window.open(
+                    `https://app.safe.global/transactions/queue?safe=${safeInfo.safeAddress}`,
+                    '_blank',
+                    'noopener,noreferrer'
+                  ),
+              },
+            }
+          );
+          return;
+        }
       }
 
       // Step 7: Build simulation call for MODIFIED transaction
@@ -639,6 +671,9 @@ export const TxOptions = () => {
     changeDiffsCheck,
     changePreTransferCheck,
     changePostTransferCheck,
+    safe,
+    safeInfo,
+    hideModal,
   ]);
 
   useEffect(() => {
@@ -1022,7 +1057,7 @@ export const TxOptions = () => {
                 return '0x';
             }
           })(),
-          value: value || 0n,
+          value: String(value || 0n),
         };
 
         const result = await safe.txs.send({
@@ -1031,6 +1066,11 @@ export const TxOptions = () => {
 
         // Check if aborted after async operation
         checkAborted();
+
+        // Validate that we got a safeTxHash back
+        if (!result.safeTxHash) {
+          throw new Error('Failed to create Safe transaction - no safeTxHash returned');
+        }
 
         hash = result.safeTxHash as `0x${string}`;
 
@@ -1153,28 +1193,32 @@ export const TxOptions = () => {
           }
         }
 
-        const txData = await waitForTx(publicClient, hash, 1);
+        // Only wait for transaction receipt for non-Safe transactions
+        // Safe transactions return safeTxHash which is not an on-chain tx hash
+        if (!safe) {
+          const txData = await waitForTx(publicClient, hash, 1);
 
-        // Check if aborted after async operation
-        checkAborted();
+          // Check if aborted after async operation
+          checkAborted();
 
-        if (txData?.status === 'success') {
-          toast.success('Transaction sent successfully!', {
-            duration: 7_000,
-            position: 'top-center',
-            closeButton: true,
-            action: {
-              label: 'Open in Explorer',
-              onClick: () =>
-                window.open(
-                  `${getExplorerUrl(chainId)}/tx/${hash}`,
-                  '_blank',
-                  'noopener,noreferrer'
-                ),
-            },
-          });
-        } else {
-          toast.error('Transaction sent unsuccessfully!');
+          if (txData?.status === 'success') {
+            toast.success('Transaction sent successfully!', {
+              duration: 7_000,
+              position: 'top-center',
+              closeButton: true,
+              action: {
+                label: 'Open in Explorer',
+                onClick: () =>
+                  window.open(
+                    `${getExplorerUrl(chainId)}/tx/${hash}`,
+                    '_blank',
+                    'noopener,noreferrer'
+                  ),
+              },
+            });
+          } else {
+            toast.error('Transaction sent unsuccessfully!');
+          }
         }
       }
 
@@ -1191,12 +1235,24 @@ export const TxOptions = () => {
         error.message === 'Transaction aborted by user'
       ) {
         toast.info('Transaction cancelled');
+      } else if (safe) {
+        // Safe-specific error handling
+        toast.error('Failed to send transaction to Safe!', {
+          duration: 7_000,
+          position: 'top-center',
+          description: error instanceof Error ? error.message : 'Unknown error',
+        });
       } else {
         toast.error('Transaction failed!');
       }
 
       closeModal();
       resetCheckState();
+      
+      // Reject the promise with the error so callers can handle it
+      if (reject) {
+        reject(error);
+      }
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;

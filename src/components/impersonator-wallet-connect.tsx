@@ -93,7 +93,7 @@ function ImpersonatorWalletConnect() {
                     {
                       to: txRequest.to as Address,
                       data: txRequest.data as Hex,
-                      value: txRequest.value ? BigInt(txRequest.value) : 0n,
+                      value: String(txRequest.value ? BigInt(txRequest.value) : 0n),
                     },
                   ],
                 });
