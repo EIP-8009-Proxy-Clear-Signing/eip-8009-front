@@ -2,6 +2,53 @@ export const proxyApproveRouterAbi = [
   {
     inputs: [
       {
+        internalType: 'address',
+        name: 'token',
+        type: 'address',
+      },
+      {
+        internalType: 'string',
+        name: 'expectedSymbol',
+        type: 'string',
+      },
+      {
+        internalType: 'uint8',
+        name: 'expectedDecimals',
+        type: 'uint8',
+      },
+      {
+        internalType: 'string',
+        name: 'actualSymbol',
+        type: 'string',
+      },
+      {
+        internalType: 'uint8',
+        name: 'actualDecimals',
+        type: 'uint8',
+      },
+    ],
+    name: 'InvalidMetadata',
+    type: 'error',
+  },
+  {
+    inputs: [
+      {
+        internalType: 'uint256',
+        name: 'metaLength',
+        type: 'uint256',
+      },
+      {
+        internalType: 'uint256',
+        name: 'balancesLength',
+        type: 'uint256',
+      },
+    ],
+    name: 'MetadataBalancesLengthMismatch',
+    type: 'error',
+  },
+  {
+    inputs: [
+      {
         internalType: 'contract IBalanceProxy',
         name: 'balanceProxy',
         type: 'address',
@@ -223,28 +270,6 @@ export const proxyApproveRouterAbi = [
       {
         components: [
           {
-            components: [
-              {
-                internalType: 'address',
-                name: 'target',
-                type: 'address',
-              },
-              {
-                internalType: 'address',
-                name: 'token',
-                type: 'address',
-              },
-              {
-                internalType: 'int256',
-                name: 'balance',
-                type: 'int256',
-              },
-            ],
-            internalType: 'struct IBalanceProxy.Balance',
-            name: 'balance',
-            type: 'tuple',
-          },
-          {
             internalType: 'string',
             name: 'symbol',
             type: 'string',
@@ -257,6 +282,28 @@ export const proxyApproveRouterAbi = [
         ],
         internalType: 'struct BalanceMetadata[]',
         name: 'meta',
+        type: 'tuple[]',
+      },
+      {
+        components: [
+          {
+            internalType: 'address',
+            name: 'target',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'token',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'balance',
+            type: 'int256',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Balance[]',
+        name: 'diffs',
         type: 'tuple[]',
       },
       {
@@ -347,28 +394,6 @@ export const proxyApproveRouterAbi = [
       {
         components: [
           {
-            components: [
-              {
-                internalType: 'address',
-                name: 'target',
-                type: 'address',
-              },
-              {
-                internalType: 'address',
-                name: 'token',
-                type: 'address',
-              },
-              {
-                internalType: 'int256',
-                name: 'balance',
-                type: 'int256',
-              },
-            ],
-            internalType: 'struct IBalanceProxy.Balance',
-            name: 'balance',
-            type: 'tuple',
-          },
-          {
             internalType: 'string',
             name: 'symbol',
             type: 'string',
@@ -381,6 +406,28 @@ export const proxyApproveRouterAbi = [
         ],
         internalType: 'struct BalanceMetadata[]',
         name: 'meta',
+        type: 'tuple[]',
+      },
+      {
+        components: [
+          {
+            internalType: 'address',
+            name: 'target',
+            type: 'address',
+          },
+          {
+            internalType: 'address',
+            name: 'token',
+            type: 'address',
+          },
+          {
+            internalType: 'int256',
+            name: 'balance',
+            type: 'int256',
+          },
+        ],
+        internalType: 'struct IBalanceProxy.Balance[]',
+        name: 'balances',
         type: 'tuple[]',
       },
       {
