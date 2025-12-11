@@ -39,7 +39,7 @@ export interface BuildSimulationDataParams {
 /**
  * Builds simulation calldata based on the selected router and approval method
  *
- * This function encodes calldata for one of three possible simulation paths:
+ * This function encodes calldata for one of two possible simulation paths:
  *
  * **1. PermitRouter Flow** (willUsePermit = true)
  * - Uses `permitProxyCallDiffsWithMeta()`
@@ -47,21 +47,17 @@ export interface BuildSimulationDataParams {
  * - Single transaction combines approval + swap
  * - Best UX: No separate approval transaction needed
  *
- * **2. ApproveRouter Flow** (shouldUseApproveRouter = true)
+ * **2. ApproveRouter Flow** (default, always used when not using permit)
  * - Uses `approveProxyCallDiffsWithMeta()`
- * - Transfers tokens to Universal Router before execution
- * - Used when token doesn't support permit
- * - Requires prior approval transaction
+ * - Can handle both token transfers and empty approvals
+ * - Used for all non-permit transactions (even with empty approvals array)
+ * - Requires prior approval transaction for tokens
  *
- * **3. Basic Proxy Flow** (fallback)
- * - Uses `proxyCallDiffsMeta()` directly on proxy
- * - Simplest path with no token transfers
- * - Used for ETH swaps or when approvals already exist
- *
- * All three flows:
+ * Both flows:
  * - Route through BalanceProxy for accurate balance tracking
  * - Use modified calldata (with adjusted amounts for slippage)
  * - Return balance diffs for UI validation
+ * - Accept separate metadata and balances arrays
  *
  * @param params - Parameters including router selection and transaction data
  * @returns Encoded calldata for the selected simulation path
@@ -94,24 +90,23 @@ export interface BuildSimulationDataParams {
  * // Returns: Encoded approveProxyCallDiffsWithMeta() call
  *
  * @example
- * // Example 3: Basic proxy flow (ETH swap, no approvals needed)
+ * // Example 3: ApproveRouter with empty approvals (ETH swap)
  * const data = buildSimulationData({
  *   willUsePermit: false,
- *   shouldUseApproveRouter: false,
+ *   shouldUseApproveRouter: true,
  *   permitSignature: null,
- *   proxy: { address: proxyAddress, abi: proxyAbi },
+ *   targetContract: { abi: approveRouterAbi },
  *   approvals: [],
  *   txTo: uniswapRouter,
  *   modifiedData: "0x..."
  * });
- * // Returns: Encoded proxyCallDiffsMeta() call
+ * // Returns: Encoded approveProxyCallDiffsWithMeta() call with empty approvals
  */
 export function buildSimulationData(
   params: BuildSimulationDataParams
 ): `0x${string}` {
   const {
     willUsePermit,
-    shouldUseApproveRouter,
     permitSignature,
     proxy,
     permitRouter,
@@ -121,13 +116,17 @@ export function buildSimulationData(
     modifiedData,
   } = params;
 
+  // Empty metadata arrays for simulation (no UI decoding needed)
+  const emptyMeta: never[] = [];
+
   if (willUsePermit && permitSignature) {
     return encodeFunctionData({
       abi: permitRouter.abi,
       functionName: 'permitProxyCallDiffsWithMeta',
       args: [
         proxy.address,
-        [],
+        emptyMeta, // metadata array (empty for simulation)
+        [], // diffs array (empty for simulation)
         approvals,
         [permitSignature],
         txTo,
@@ -135,17 +134,20 @@ export function buildSimulationData(
         [],
       ],
     }) as `0x${string}`;
-  } else if (shouldUseApproveRouter && approvals.length > 0) {
+  } else {
+    // Always use ApproveRouter (even with empty approvals)
     return encodeFunctionData({
       abi: targetContract.abi,
       functionName: 'approveProxyCallDiffsWithMeta',
-      args: [proxy.address, [], approvals, txTo, modifiedData, []],
-    }) as `0x${string}`;
-  } else {
-    return encodeFunctionData({
-      abi: proxy.abi,
-      functionName: 'proxyCallDiffsMeta',
-      args: [[], approvals, txTo, modifiedData, []],
+      args: [
+        proxy.address,
+        emptyMeta, // metadata array (empty for simulation)
+        [], // diffs array (empty for simulation)
+        approvals,
+        txTo,
+        modifiedData,
+        [],
+      ],
     }) as `0x${string}`;
   }
 }
