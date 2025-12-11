@@ -556,7 +556,7 @@ export async function handleApprovalFlow(
       publicClient
     );
 
-    if (usePermitRouter && tokenSupportsPermit) {
+    if (usePermitRouter && tokenSupportsPermit && !isSafeWallet) {
       const permitSignature = await requestPermitSignature({
         inputTokenAddress,
         tokenSymbol,
