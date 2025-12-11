@@ -855,7 +855,7 @@ export const TxOptions = () => {
         });
 
       const shouldUsePermitRouter =
-        usePermitRouter && allTokensSupportPermit && !safe;
+        usePermitRouter && allTokensSupportPermit && (!safe && !safeInfo);
 
       const shouldUseApproveRouter =
         !shouldUsePermitRouter && approvalsWithFlags.some((a) => a.useTransfer);
