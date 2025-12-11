@@ -407,15 +407,11 @@ export const TxOptions = () => {
         inputTokenAddress !== zeroAddress &&
         inputTokenAddress !== ethAddress;
 
-      let shouldUseApproveRouter = false;
       let willUsePermitForExecution = false;
       let permitSignature: PermitData | null = null;
 
-      if (isTokenSwap) {
-        shouldUseApproveRouter = true;
-      }
-
-      const targetContract = shouldUseApproveRouter ? approveRouter : proxy;
+      // For token swaps, we always use ApproveRouter (unless using permit)
+      const targetContract = approveRouter;
 
       // Step 6: Handle approval/permit flow
       if (isTokenSwap && inputTokenAddress) {
@@ -471,9 +467,12 @@ export const TxOptions = () => {
 
       // Step 7: Build simulation call for MODIFIED transaction
       setLoadingStep('Simulating modified transaction through proxy...');
+      
+      // Always use ApproveRouter for simulation (even with empty approvals)
+      // PermitRouter if permit signature available
       const simulationContract = willUsePermitForExecution
         ? permitRouter
-        : targetContract;
+        : approveRouter;
 
       const approvals =
         isTokenSwap && inputTokenAddress
@@ -491,11 +490,11 @@ export const TxOptions = () => {
 
       const simulationData = buildSimulationData({
         willUsePermit: willUsePermitForExecution,
-        shouldUseApproveRouter,
+        shouldUseApproveRouter: true, // Always use ApproveRouter for non-permit flows
         permitSignature,
         proxy: proxy as { address: string; abi: Abi },
         permitRouter: permitRouter as { abi: Abi },
-        targetContract: targetContract as { abi: Abi },
+        targetContract: approveRouter as { abi: Abi }, // Always ApproveRouter
         approvals,
         txTo: tx.to,
         modifiedData,
@@ -646,35 +645,7 @@ export const TxOptions = () => {
         abortControllerRef.current = null;
       }
     }
-  }, [
-    publicClient,
-    tx,
-    address,
-    chainId,
-    activeSlippage,
-    mode,
-    walletClient,
-    usePermitRouter,
-    resetCheckState,
-    checks.approvals.length,
-    checks.withdrawals.length,
-    checks.diffs.length,
-    checks.preTransfer.length,
-    checks.postTransfer.length,
-    createApprovalCheck,
-    createWithdrawalCheck,
-    createDiffsCheck,
-    createPreTransferCheck,
-    createPostTransferCheck,
-    changeApprovalCheck,
-    changeWithdrawalCheck,
-    changeDiffsCheck,
-    changePreTransferCheck,
-    changePostTransferCheck,
-    safe,
-    safeInfo,
-    hideModal,
-  ]);
+  }, [publicClient, tx, address, chainId, activeSlippage, mode, walletClient, usePermitRouter, resetCheckState, checks.approvals.length, checks.withdrawals.length, checks.diffs.length, checks.preTransfer.length, checks.postTransfer.length, createApprovalCheck, createWithdrawalCheck, createDiffsCheck, createPreTransferCheck, createPostTransferCheck, changeApprovalCheck, changeWithdrawalCheck, changeDiffsCheck, changePreTransferCheck, changePostTransferCheck, safe, safeInfo]);
 
   useEffect(() => {
     setDataToForm();
@@ -798,7 +769,7 @@ export const TxOptions = () => {
 
       // Transform metadata for contract calls
       // Note: preTransfers are populated in UI but NOT sent to contract (UI display only)
-      const [postTransfers, , diffs, approvals, withdrawals] =
+      const [postTransfersWithMeta, , diffsWithMeta, approvalsWithMeta, withdrawals] =
         await Promise.all([
           transformToMetadata(checks.postTransfer, publicClient),
           transformToMetadata(checks.preTransfer, publicClient), // For UI only
@@ -807,10 +778,25 @@ export const TxOptions = () => {
           transformToMetadata(withdrawalsToUse, publicClient),
         ]);
 
+      // Separate metadata and balances for new contract API
+      const postTransfersMeta = postTransfersWithMeta.map(item => ({
+        symbol: item.symbol,
+        decimals: item.decimals,
+      }));
+      const postTransfers = postTransfersWithMeta.map(item => item.balance);
+
+      const diffsMeta = diffsWithMeta.map(item => ({
+        symbol: item.symbol,
+        decimals: item.decimals,
+      }));
+      const diffs = diffsWithMeta.map(item => item.balance);
+
+      const approvals = approvalsWithMeta.map(item => item.balance);
+
       checkAborted();
 
       const approvalsWithFlags = approvals.map((approval) => ({
-        balance: approval.balance,
+        balance: approval,
         useTransfer: isUniversalRouter && !hasWrapEthCommand,
       }));
 
@@ -837,8 +823,8 @@ export const TxOptions = () => {
       // Determine router to use based on transaction requirements:
       // Priority order:
       // 1. permitRouter - if all tokens support EIP-2612 permit (best, gasless) and flag is true
-      // 2. approveRouter - if tokens need transfers (Universal Router non-WRAP_ETH)
-      // 3. proxy - basic approval-only flow (fallback)
+      // 2. approveRouter - always used (even with empty approvals)
+      // Note: We ALWAYS use a router now, never direct BalanceProxy calls
       const allTokensSupportPermit =
         approvalsWithFlags.length > 0 &&
         permitSupport.every((supports, idx) => {
@@ -855,17 +841,13 @@ export const TxOptions = () => {
         });
 
       const shouldUsePermitRouter =
-        usePermitRouter && allTokensSupportPermit && (!safe && !safeInfo);
+        usePermitRouter && allTokensSupportPermit && !safe;
 
-      const shouldUseApproveRouter =
-        !shouldUsePermitRouter && approvalsWithFlags.some((a) => a.useTransfer);
-
+      // Always use a router (approveRouter is the default, even with empty approvals)
       const permitRouter = getContract('proxyPermitRouter', chainId);
-      const targetContract = shouldUseApproveRouter
-        ? approveRouter
-        : shouldUsePermitRouter
-          ? permitRouter
-          : proxy;
+      const targetContract = shouldUsePermitRouter
+        ? permitRouter
+        : approveRouter;
 
       const targetContractAddress = targetContract.address as `0x${string}`;
       const value = tx.value ? BigInt(tx.value) : undefined;
@@ -970,25 +952,13 @@ export const TxOptions = () => {
           data: (() => {
             switch (mode) {
               case EMode.diifs: {
-                if (shouldUseApproveRouter) {
-                  return encodeFunctionData({
-                    abi: targetContract.abi,
-                    functionName: 'approveProxyCallDiffsWithMeta',
-                    args: [
-                      proxy.address,
-                      diffs,
-                      approvalsWithFlags,
-                      tx.to,
-                      data,
-                      withdrawals.map((w) => w.balance),
-                    ],
-                  });
-                } else if (shouldUsePermitRouter) {
+                if (shouldUsePermitRouter) {
                   return encodeFunctionData({
                     abi: targetContract.abi,
                     functionName: 'permitProxyCallDiffsWithMeta',
                     args: [
                       proxy.address,
+                      diffsMeta,
                       diffs,
                       approvalsWithFlags,
                       permitSignatures,
@@ -998,10 +968,13 @@ export const TxOptions = () => {
                     ],
                   });
                 } else {
+                  // Always use ApproveRouter (even with empty approvals)
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'proxyCallDiffsMeta',
+                    functionName: 'approveProxyCallDiffsWithMeta',
                     args: [
+                      proxy.address,
+                      diffsMeta,
                       diffs,
                       approvalsWithFlags,
                       tx.to,
@@ -1012,25 +985,13 @@ export const TxOptions = () => {
                 }
               }
               case EMode['pre/post']: {
-                if (shouldUseApproveRouter) {
-                  return encodeFunctionData({
-                    abi: targetContract.abi,
-                    functionName: 'approveProxyCallWithMeta',
-                    args: [
-                      proxy.address,
-                      postTransfers,
-                      approvalsWithFlags,
-                      tx.to,
-                      data,
-                      withdrawals.map((w) => w.balance),
-                    ],
-                  });
-                } else if (shouldUsePermitRouter) {
+                if (shouldUsePermitRouter) {
                   return encodeFunctionData({
                     abi: targetContract.abi,
                     functionName: 'permitProxyCallWithMeta',
                     args: [
                       proxy.address,
+                      postTransfersMeta,
                       postTransfers,
                       approvalsWithFlags,
                       permitSignatures,
@@ -1040,10 +1001,13 @@ export const TxOptions = () => {
                     ],
                   });
                 } else {
+                  // Always use ApproveRouter (even with empty approvals)
                   return encodeFunctionData({
                     abi: targetContract.abi,
-                    functionName: 'proxyCallMeta',
+                    functionName: 'approveProxyCallWithMeta',
                     args: [
+                      proxy.address,
+                      postTransfersMeta,
                       postTransfers,
                       approvalsWithFlags,
                       tx.to,
@@ -1091,28 +1055,14 @@ export const TxOptions = () => {
       } else {
         switch (mode) {
           case EMode.diifs: {
-            if (shouldUseApproveRouter) {
-              hash = await writeContractAsync({
-                abi: targetContract.abi,
-                address: targetContract.address as `0x${string}`,
-                functionName: 'approveProxyCallDiffsWithMeta',
-                args: [
-                  proxy.address,
-                  diffs,
-                  approvalsWithFlags,
-                  tx.to,
-                  data,
-                  withdrawals.map((w) => w.balance),
-                ],
-                value: value,
-              });
-            } else if (shouldUsePermitRouter) {
+            if (shouldUsePermitRouter) {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
                 functionName: 'permitProxyCallDiffsWithMeta',
                 args: [
                   proxy.address,
+                  diffsMeta,
                   diffs,
                   approvalsWithFlags,
                   permitSignatures as readonly PermitData[] & never[],
@@ -1123,11 +1073,14 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
+              // Always use ApproveRouter (even with empty approvals)
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'proxyCallDiffsMeta',
+                functionName: 'approveProxyCallDiffsWithMeta',
                 args: [
+                  proxy.address,
+                  diffsMeta,
                   diffs,
                   approvalsWithFlags,
                   tx.to,
@@ -1142,28 +1095,14 @@ export const TxOptions = () => {
           }
 
           case EMode['pre/post']: {
-            if (shouldUseApproveRouter) {
-              hash = await writeContractAsync({
-                abi: targetContract.abi,
-                address: targetContract.address as `0x${string}`,
-                functionName: 'approveProxyCallWithMeta',
-                args: [
-                  proxy.address,
-                  postTransfers,
-                  approvalsWithFlags,
-                  tx.to,
-                  data,
-                  withdrawals.map((w) => w.balance),
-                ],
-                value: value,
-              });
-            } else if (shouldUsePermitRouter) {
+            if (shouldUsePermitRouter) {
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
                 functionName: 'permitProxyCallWithMeta',
                 args: [
                   proxy.address,
+                  postTransfersMeta,
                   postTransfers,
                   approvalsWithFlags,
                   permitSignatures as readonly PermitData[] & never[],
@@ -1174,11 +1113,14 @@ export const TxOptions = () => {
                 value: value,
               });
             } else {
+              // Always use ApproveRouter (even with empty approvals)
               hash = await writeContractAsync({
                 abi: targetContract.abi,
                 address: targetContract.address as `0x${string}`,
-                functionName: 'proxyCallMeta',
+                functionName: 'approveProxyCallWithMeta',
                 args: [
+                  proxy.address,
+                  postTransfersMeta,
                   postTransfers,
                   approvalsWithFlags,
                   tx.to,
