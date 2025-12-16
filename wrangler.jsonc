@@ -1,0 +1,7 @@
+{
+  "name": "eip-8009-front",
+  "compatibility_date": "2025-12-16",
+  "assets": {
+    "directory": "./dist"
+  }
+}
