@@ -1,13 +1,13 @@
 {
-  "name": "EIP-XXXX Impersonator",
-  "description": "EIP-XXXX Impersonator",
+  "name": "EIP-8009 Impersonator",
+  "description": "EIP-8009 Impersonator",
   "iconPath": "vite.svg",
   "providedBy": {
-    "name": "EIP-XXXX",
-    "url": "https://github.com"
+    "name": "EIP-8009",
+    "url": "https://github.com/EIP-8009-Proxy-Clear-Signing/eip-8009-front"
   },
   "version": "1.0.0",
-  "shortName": "EIP-XXXX Impersonator",
+  "shortName": "EIP-8009 Impersonator",
   "chainIds": [
     1,
     10,
