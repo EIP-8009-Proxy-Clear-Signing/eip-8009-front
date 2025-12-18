@@ -4549,9 +4549,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"eip-xxxx-front@workspace:.":
+"eip-8009-front@workspace:.":
   version: 0.0.0-use.local
-  resolution: "eip-xxxx-front@workspace:."
+  resolution: "eip-8009-front@workspace:."
   dependencies:
     "@eslint/js": "npm:^9.25.0"
     "@polkadot/react-identicon": "npm:^3.14.1"
