@@ -7,15 +7,15 @@ import { proxyPermitRouterAbi } from './abis/proxy-permit-router.abi';
 export const contracts = {
   [sepolia.id]: {
     proxy: {
-      address: '0xa0cB43625E0b5f977a94a7492F407F61F8F44F6b',
+      address: '0xa1A77109EaAFDEf3b2Eb36493A98868D4bD82FEf',
       abi: proxyAbi,
     },
     proxyApproveRouter: {
-      address: '0x2a6647e2c2acBE2D5791cC21F708321D05845D7c',
+      address: '0xf3c82E2176D894ED32C5748C22238ebfcc68CDd8',
       abi: proxyApproveRouterAbi,
     },
     proxyPermitRouter: {
-      address: '0x9D168418CcEA8A72C1C33490bEd209E8aFDED7E5',
+      address: '0xfEa607c2f74D7ac4ac35360e51f3fe08E319ebA2',
       abi: proxyPermitRouterAbi,
     },
     uniswapRouter: {
