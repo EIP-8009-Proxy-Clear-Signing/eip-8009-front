@@ -3,27 +3,6 @@ export const proxyAbi = [
     inputs: [
       {
         internalType: 'address',
-        name: 'target',
-        type: 'address',
-      },
-      {
-        internalType: 'bytes',
-        name: 'data',
-        type: 'bytes',
-      },
-      {
-        internalType: 'bytes',
-        name: 'returnData',
-        type: 'bytes',
-      },
-    ],
-    name: 'CallFailed',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'address',
         name: 'token',
         type: 'address',
       },
@@ -43,70 +22,7 @@ export const proxyAbi = [
         type: 'uint256',
       },
     ],
-    name: 'InsufficientBalance',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'address',
-        name: 'token',
-        type: 'address',
-      },
-      {
-        internalType: 'string',
-        name: 'expectedSymbol',
-        type: 'string',
-      },
-      {
-        internalType: 'uint8',
-        name: 'expectedDecimals',
-        type: 'uint8',
-      },
-      {
-        internalType: 'string',
-        name: 'actualSymbol',
-        type: 'string',
-      },
-      {
-        internalType: 'uint8',
-        name: 'actualDecimals',
-        type: 'uint8',
-      },
-    ],
-    name: 'InvalidMetadata',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'address',
-        name: 'token',
-        type: 'address',
-      },
-      {
-        internalType: 'address',
-        name: 'target',
-        type: 'address',
-      },
-    ],
-    name: 'MaliciousApproveTarget',
-    type: 'error',
-  },
-  {
-    inputs: [
-      {
-        internalType: 'int256',
-        name: 'amount',
-        type: 'int256',
-      },
-    ],
-    name: 'NegativeApprovalAmount',
-    type: 'error',
-  },
-  {
-    inputs: [],
-    name: 'ReentrancyGuardReentrantCall',
+    name: 'ERC8009BalanceConstraintViolation',
     type: 'error',
   },
   {
@@ -132,7 +48,33 @@ export const proxyAbi = [
         type: 'int256',
       },
     ],
-    name: 'UnexpectedBalanceDiff',
+    name: 'ERC8009BalanceDiffConstraintViolation',
+    type: 'error',
+  },
+  {
+    inputs: [
+      {
+        internalType: 'address',
+        name: 'target',
+        type: 'address',
+      },
+      {
+        internalType: 'bytes',
+        name: 'data',
+        type: 'bytes',
+      },
+      {
+        internalType: 'bytes',
+        name: 'returnData',
+        type: 'bytes',
+      },
+    ],
+    name: 'ERC8009CallFailed',
+    type: 'error',
+  },
+  {
+    inputs: [],
+    name: 'ReentrancyGuardReentrantCall',
     type: 'error',
   },
   {
