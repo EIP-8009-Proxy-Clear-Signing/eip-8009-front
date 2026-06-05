@@ -1,20 +1,20 @@
 import { Address, Hex } from 'viem';
 import { create } from 'zustand';
+import { SafeExecutionRequest } from '@/lib/safe-utils';
+
+export type ModalTx = {
+  to: Address;
+  data: Hex;
+  value?: string | number | bigint;
+  safeContext?: SafeExecutionRequest;
+};
 
 export type UseModalPromise = {
   isAdvanced: boolean;
   modalOpen: boolean;
   usePermitRouter: boolean;
-  tx: {
-    to: Address;
-    data: Hex;
-    value?: number;
-  } | null;
-  openModal: (tx: {
-    to: Address;
-    data: Hex;
-    value?: number;
-  }) => Promise<string>;
+  tx: ModalTx | null;
+  openModal: (tx: ModalTx) => Promise<string>;
   resolve: ((value: string) => void) | null;
   reject: ((reason: unknown) => void) | null;
   closeModal: () => void;
@@ -31,7 +31,7 @@ export const useModalPromise = create<UseModalPromise>((set, get) => ({
     return saved !== null ? saved === 'true' : true;
   })(),
   tx: null,
-  openModal: (tx: { to: Address; data: Hex }) => {
+  openModal: (tx: ModalTx) => {
     set({ modalOpen: true, tx });
     return new Promise((resolve, reject) => {
       set({ resolve, reject });

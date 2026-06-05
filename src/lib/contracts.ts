@@ -3,11 +3,12 @@ import { proxyAbi } from './abis/proxy.abi';
 import { universalRouterAbi } from './abis/universal-router.abi';
 import { proxyApproveRouterAbi } from './abis/proxy-approve-router.abi';
 import { proxyPermitRouterAbi } from './abis/proxy-permit-router.abi';
+import { safeRouterAbi } from './abis/safe-router.abi';
 
 export const contracts = {
   [sepolia.id]: {
     proxy: {
-      address: '0xa1A77109EaAFDEf3b2Eb36493A98868D4bD82FEf',
+      address: '0x800B36cc16C7572E1d600506a0d7d30890fF35f4',
       abi: proxyAbi,
     },
     proxyApproveRouter: {
@@ -21,6 +22,10 @@ export const contracts = {
     uniswapRouter: {
       address: '0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b',
       abi: universalRouterAbi,
+    },
+    safeRouter: {
+      address: '0xE5908249E7701CD8Ed1558676DF7ccA823c891D9',
+      abi: safeRouterAbi,
     },
   },
 } as const;

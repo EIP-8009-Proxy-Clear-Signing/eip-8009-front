@@ -32,7 +32,7 @@ export interface OriginalSimulationParams {
   tx: {
     to: string;
     data: string;
-    value?: string | number;
+    value?: string | number | bigint;
   };
   maxRetries?: number;
   retryDelay?: number;
