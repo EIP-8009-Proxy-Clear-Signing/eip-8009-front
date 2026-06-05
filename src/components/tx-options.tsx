@@ -48,6 +48,8 @@ import { whatsabi } from '@shazow/whatsabi';
 import {
   getEnumValues,
   getExplorerUrl,
+  formatBalancePrecise,
+  formatToken,
   shortenAddress,
   waitForTx,
 } from '@/lib/utils.ts';
@@ -72,6 +74,7 @@ import {
   simulateModifiedTransaction,
   validateSimulationResult,
   extractAssetChanges,
+  type SimulationResult,
 } from '@/lib/simulation-utils';
 import {
   determineApprovalAmount,
@@ -81,12 +84,32 @@ import { checkSufficientBalance } from '@/lib/balance-utils';
 import { getTokenMetadata } from '@/lib/token-utils';
 import { populateFormChecks } from '@/lib/form-utils';
 import { buildSimulationData } from '@/lib/simulation-data-builder';
+import {
+  prepareSafeRouterSafeTx,
+  toBigIntValue,
+  validateSafeRouterSetup,
+} from '@/lib/safe-utils';
 
 const formatter = new Intl.NumberFormat('en-US', {
   style: 'decimal',
   notation: 'standard',
   maximumSignificantDigits: 6,
 });
+
+const formatAbsBalance = (balance: number | string): string => {
+  if (typeof balance === 'number') {
+    return formatter.format(Math.abs(balance));
+  }
+  const abs = balance.startsWith('-') ? balance.slice(1) : balance;
+  const [intPart, fracPart = ''] = abs.split('.');
+  const formattedInt = new Intl.NumberFormat('en-US').format(BigInt(intPart || '0'));
+  if (!fracPart) return formattedInt;
+  const intSigFigs = intPart.replace(/^0+/, '').length;
+  const leadingZeros = fracPart.match(/^0*/)![0].length;
+  const fracAllowed = leadingZeros + Math.max(0, 6 - intSigFigs);
+  const trimmed = fracPart.slice(0, fracAllowed).replace(/0+$/, '');
+  return trimmed ? `${formattedInt}.${trimmed}` : formattedInt;
+};
 
 function swapAddressInArgsTraverse<T>(
   args: T,
@@ -234,6 +257,20 @@ const transformToMetadata = async (
   return result;
 };
 
+const applySlippageToDiff = (diff: bigint, slippage: number): bigint => {
+  const scale = 1_000_000n;
+  const multiplier =
+    diff >= 0n
+      ? Math.floor((1 - slippage / 100) * Number(scale))
+      : Math.floor((1 + slippage / 100) * Number(scale));
+
+  return (diff * BigInt(multiplier)) / scale;
+};
+
+type SafeAssetChange = SimulationResult['assetChanges'][number] & {
+  target?: `0x${string}`;
+};
+
 export const TxOptions = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState<string>('');
@@ -359,6 +396,163 @@ export const TxOptions = () => {
       const uniswapRouter = getContract('uniswapRouter', chainId);
       const approveRouter = getContract('proxyApproveRouter', chainId);
       const permitRouter = getContract('proxyPermitRouter', chainId);
+
+      if (tx.safeContext) {
+        const safeRouter = getContract('safeRouter', chainId);
+        const { safe, safeTx } = tx.safeContext;
+
+        setLoadingStep('Checking Safe setup...');
+        await validateSafeRouterSetup({
+          publicClient,
+          safe,
+          safeRouter: safeRouter.address,
+          executor: address,
+        });
+        checkAborted();
+
+        if (safeTx.operation !== 0) {
+          toast.error(
+            'Safe batch and delegatecall transactions are not supported for automatic clear signing yet'
+          );
+          setLoadingStep('');
+          return;
+        }
+
+        setLoadingStep('Simulating Safe transaction...');
+        const { success, result } = await simulateOriginalTransaction({
+          publicClient,
+          address: safe,
+          tx: {
+            to: safeTx.to,
+            data: safeTx.data,
+            value: safeTx.value,
+          },
+          maxRetries: 3,
+        });
+        checkAborted();
+
+        if (!success || !result || !validateSimulationResult(result)) {
+          toast.error('Safe transaction simulation failed');
+          setLoadingStep('');
+          return;
+        }
+
+        let assetChanges = result.assetChanges.filter(
+          (asset) => asset.value.diff !== 0n
+        ) as SafeAssetChange[];
+
+        if (
+          assetChanges.length === 0 &&
+          safeTx.operation === 0 &&
+          safeTx.value > 0n &&
+          safeTx.data === '0x'
+        ) {
+          setLoadingStep('Reading ETH balances...');
+          const [safeBalance, recipientBalance] = await Promise.all([
+            publicClient.getBalance({ address: safe }),
+            publicClient.getBalance({ address: safeTx.to }),
+          ]);
+
+          assetChanges = [
+            {
+              target: safe,
+              token: {
+                address: zeroAddress,
+                symbol: 'ETH',
+                decimals: 18,
+              },
+              value: {
+                diff: -safeTx.value,
+                pre: safeBalance,
+                post: safeBalance - safeTx.value,
+              },
+            },
+            {
+              target: safeTx.to,
+              token: {
+                address: zeroAddress,
+                symbol: 'ETH',
+                decimals: 18,
+              },
+              value: {
+                diff: safeTx.value,
+                pre: recipientBalance,
+                post: recipientBalance + safeTx.value,
+              },
+            },
+          ];
+        }
+
+        if (assetChanges.length === 0) {
+          console.warn('Safe simulation returned no balance changes:', {
+            safe,
+            target: safeTx.to,
+            value: safeTx.value,
+            operation: safeTx.operation,
+            result,
+          });
+          toast.error('No Safe balance changes detected', {
+            description:
+              'This SafeRouter flow currently supports transactions that change Safe ETH/ERC20 balances. Approvals, owner changes, and Safe config calls need a separate check type.',
+            duration: 10_000,
+          });
+          setLoadingStep('');
+          return;
+        }
+
+        for (let i = checks.diffs.length; i < assetChanges.length; i++) {
+          createDiffsCheck();
+        }
+        for (
+          let i = checks.preTransfer.length;
+          i < assetChanges.length;
+          i++
+        ) {
+          createPreTransferCheck();
+        }
+        for (
+          let i = checks.postTransfer.length;
+          i < assetChanges.length;
+          i++
+        ) {
+          createPostTransferCheck();
+        }
+
+        assetChanges.forEach((asset, index) => {
+          const decimals = asset.token.decimals || 18;
+          const adjustedDiff = applySlippageToDiff(
+            asset.value.diff,
+            activeSlippage
+          );
+          const token = formatToken(asset.token.symbol, asset.token.address);
+          const common = {
+            target: asset.target ?? safe,
+            token,
+            symbol: asset.token.symbol,
+            decimals,
+          };
+
+          changeDiffsCheck(index, {
+            ...common,
+            balance: formatBalancePrecise(adjustedDiff, decimals),
+          });
+          changePreTransferCheck(index, {
+            ...common,
+            balance: formatBalancePrecise(asset.value.pre, decimals),
+          });
+          changePostTransferCheck(index, {
+            ...common,
+            balance: formatBalancePrecise(
+              asset.value.pre + adjustedDiff,
+              decimals
+            ),
+          });
+        });
+
+        setLoadingStep('');
+        setIsSimulationComplete(true);
+        return;
+      }
 
       const isUniversalRouter = isUniversalRouterTransaction(
         tx.to,
@@ -506,7 +700,7 @@ export const TxOptions = () => {
         address,
         simulationContract: simulationContract as { address: string },
         simulationData,
-        txValue: BigInt(tx.value || 0),
+        txValue: toBigIntValue(tx.value),
       });
 
       if (!simRes) {
@@ -597,7 +791,7 @@ export const TxOptions = () => {
           account: address,
           to: tx.to as `0x${string}`,
           data: tx.data as `0x${string}`,
-          value: BigInt(tx.value || 0),
+          value: toBigIntValue(tx.value),
         });
       } catch (error) {
         console.error('Gas estimation failed, using simulation gas:', error);
@@ -681,6 +875,105 @@ export const TxOptions = () => {
       const proxy = getContract('proxy', chainId);
       const approveRouter = getContract('proxyApproveRouter', chainId);
       const uniswapRouter = getContract('uniswapRouter', chainId);
+
+      if (tx.safeContext) {
+        const safeRouter = getContract('safeRouter', chainId);
+        const { safe, safeTx } = tx.safeContext;
+
+        await validateSafeRouterSetup({
+          publicClient,
+          safe,
+          safeRouter: safeRouter.address,
+          executor: address,
+        });
+
+        checkAborted();
+
+        const [postTransfersWithMeta, diffsWithMeta] = await Promise.all([
+          transformToMetadata(checks.postTransfer, publicClient),
+          transformToMetadata(checks.diffs, publicClient),
+        ]);
+
+        const postTransfersMeta = postTransfersWithMeta.map((item) => ({
+          symbol: item.symbol,
+          decimals: item.decimals,
+        }));
+        const postTransfers = postTransfersWithMeta.map(
+          (item) => item.balance
+        );
+
+        const diffsMeta = diffsWithMeta.map((item) => ({
+          symbol: item.symbol,
+          decimals: item.decimals,
+        }));
+        const diffs = diffsWithMeta.map((item) => item.balance);
+
+        const safeTxForRouter = await prepareSafeRouterSafeTx({
+          publicClient,
+          safe,
+          safeRouter: safeRouter.address,
+          safeTx,
+        });
+
+        checkAborted();
+
+        let hash: `0x${string}` = '0x';
+
+        switch (mode) {
+          case EMode.diifs: {
+            hash = await writeContractAsync({
+              abi: safeRouter.abi,
+              address: safeRouter.address,
+              functionName: 'safeExecuteWithDiffsMeta',
+              args: [proxy.address, safe, diffsMeta, diffs, safeTxForRouter],
+            });
+            break;
+          }
+
+          case EMode['pre/post']: {
+            hash = await writeContractAsync({
+              abi: safeRouter.abi,
+              address: safeRouter.address,
+              functionName: 'safeExecuteWithPostBalancesMeta',
+              args: [
+                proxy.address,
+                safe,
+                postTransfersMeta,
+                postTransfers,
+                safeTxForRouter,
+              ],
+            });
+            break;
+          }
+        }
+
+        const txData = await waitForTx(publicClient, hash, 1);
+        checkAborted();
+
+        if (txData?.status === 'success') {
+          toast.success('Safe transaction executed successfully!', {
+            duration: 7_000,
+            position: 'top-center',
+            closeButton: true,
+            action: {
+              label: 'Open in Explorer',
+              onClick: () =>
+                window.open(
+                  `${getExplorerUrl(chainId)}/tx/${hash}`,
+                  '_blank',
+                  'noopener,noreferrer'
+                ),
+            },
+          });
+        } else {
+          toast.error('Safe transaction execution failed!');
+        }
+
+        resolve(hash);
+        hideModal();
+        resetCheckState();
+        return;
+      }
 
       const isUniversalRouter = isUniversalRouterTransaction(
         tx.to,
@@ -850,7 +1143,7 @@ export const TxOptions = () => {
         : approveRouter;
 
       const targetContractAddress = targetContract.address as `0x${string}`;
-      const value = tx.value ? BigInt(tx.value) : undefined;
+      const value = tx.value ? toBigIntValue(tx.value) : undefined;
 
       const permitSignatures: PermitData[] = [];
 
@@ -1230,6 +1523,23 @@ export const TxOptions = () => {
 
   if (!modalOpen) return null;
 
+  const isSafeRouterFlow = !!tx?.safeContext;
+  const renderBalanceLine = (check: Check, sign: '-' | '+') => (
+    <p
+      key={`${check.target}-${check.token}-${check.balance}`}
+      className="text-lg font-bold"
+    >
+      {sign} {formatAbsBalance(check.balance)}{' '}
+      {check.symbol}
+      {isSafeRouterFlow && check.target && (
+        <span className="text-sm font-normal text-muted-foreground">
+          {' '}
+          {sign === '-' ? 'from' : 'to'} {shortenAddress(check.target)}
+        </span>
+      )}
+    </p>
+  );
+
   return (
     <Dialog
       open={modalOpen}
@@ -1242,12 +1552,14 @@ export const TxOptions = () => {
     >
       <DialogContent className="overflow-y-auto max-h-[80vh]">
         <DialogHeader>
-          <DialogTitle>Settings</DialogTitle>
+          <DialogTitle>{isSafeRouterFlow ? 'Safe settings' : 'Settings'}</DialogTitle>
           <DialogDescription className="flex items-center justify-between">
             <span className="text-sm">
-              {tx
-                ? `Call to ${shortenAddress(tx.to)}`
-                : 'Setup your tx options here.'}
+              {tx?.safeContext
+                ? `Safe ${shortenAddress(tx.safeContext.safe)} calls ${shortenAddress(tx.to)}`
+                : tx
+                  ? `Call to ${shortenAddress(tx.to)}`
+                  : 'Setup your tx options here.'}
             </span>
             <Button
               variant="outline"
@@ -1291,36 +1603,44 @@ export const TxOptions = () => {
               </p>
             )}
             <Accordion type="single" collapsible defaultValue="pre-transfer">
-              <AccordionItem value="approval">
-                <AccordionTrigger>Approval</AccordionTrigger>
-                <AccordionContent className="flex flex-col gap-2">
-                  {checks.approvals.map((check, index) => (
-                    <ApprovalComp
-                      key={index}
-                      check={check}
-                      onChange={(check) => changeApprovalCheck(index, check)}
-                      onRemove={() => removeApprovalCheck(index)}
-                      index={index}
-                    />
-                  ))}
-                  <Button onClick={createApprovalCheck}>Add</Button>
-                </AccordionContent>
-              </AccordionItem>
-              <AccordionItem value="withdrawal">
-                <AccordionTrigger>Withdrawal</AccordionTrigger>
-                <AccordionContent className="flex flex-col gap-2">
-                  {checks.withdrawals.map((check, index) => (
-                    <WithdrawalComp
-                      key={index}
-                      check={check}
-                      onChange={(check) => changeWithdrawalCheck(index, check)}
-                      onRemove={() => removeWithdrawalCheck(index)}
-                      index={index}
-                    />
-                  ))}
-                  <Button onClick={createWithdrawalCheck}>Add</Button>
-                </AccordionContent>
-              </AccordionItem>
+              {!isSafeRouterFlow && (
+                <>
+                  <AccordionItem value="approval">
+                    <AccordionTrigger>Approval</AccordionTrigger>
+                    <AccordionContent className="flex flex-col gap-2">
+                      {checks.approvals.map((check, index) => (
+                        <ApprovalComp
+                          key={index}
+                          check={check}
+                          onChange={(check) =>
+                            changeApprovalCheck(index, check)
+                          }
+                          onRemove={() => removeApprovalCheck(index)}
+                          index={index}
+                        />
+                      ))}
+                      <Button onClick={createApprovalCheck}>Add</Button>
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="withdrawal">
+                    <AccordionTrigger>Withdrawal</AccordionTrigger>
+                    <AccordionContent className="flex flex-col gap-2">
+                      {checks.withdrawals.map((check, index) => (
+                        <WithdrawalComp
+                          key={index}
+                          check={check}
+                          onChange={(check) =>
+                            changeWithdrawalCheck(index, check)
+                          }
+                          onRemove={() => removeWithdrawalCheck(index)}
+                          index={index}
+                        />
+                      ))}
+                      <Button onClick={createWithdrawalCheck}>Add</Button>
+                    </AccordionContent>
+                  </AccordionItem>
+                </>
+              )}
               {mode === EMode.diifs && (
                 <AccordionItem value="diffs">
                   <AccordionTrigger>Diffs</AccordionTrigger>
@@ -1381,29 +1701,24 @@ export const TxOptions = () => {
         ) : (
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <Label>You spend:</Label>
+              <Label>
+                {isSafeRouterFlow ? 'Max balance decrease:' : 'You spend:'}
+              </Label>
               {checks.diffs
                 .filter(
                   (check) => check.token != '' && Number(check.balance) < 0
                 )
-                .map((check) => (
-                  <p key={check.token} className="text-lg font-bold">
-                    - {formatter.format(Math.abs(Number(check.balance)))}{' '}
-                    {check.symbol}
-                  </p>
-                ))}
+                .map((check) => renderBalanceLine(check, '-'))}
             </div>
             <div className="flex flex-col gap-2">
-              <Label>You receive:</Label>
+              <Label>
+                {isSafeRouterFlow ? 'Min balance increase:' : 'You receive:'}
+              </Label>
               {checks.diffs
                 .filter(
                   (check) => check.token != '' && Number(check.balance) > 0
                 )
-                .map((check) => (
-                  <p key={check.token} className="text-lg font-bold">
-                    + {formatter.format(Number(check.balance))} {check.symbol}
-                  </p>
-                ))}
+                .map((check) => renderBalanceLine(check, '+'))}
             </div>
           </div>
         )}
