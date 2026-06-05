@@ -96,6 +96,21 @@ const formatter = new Intl.NumberFormat('en-US', {
   maximumSignificantDigits: 6,
 });
 
+const formatAbsBalance = (balance: number | string): string => {
+  if (typeof balance === 'number') {
+    return formatter.format(Math.abs(balance));
+  }
+  const abs = balance.startsWith('-') ? balance.slice(1) : balance;
+  const [intPart, fracPart = ''] = abs.split('.');
+  const formattedInt = new Intl.NumberFormat('en-US').format(BigInt(intPart || '0'));
+  if (!fracPart) return formattedInt;
+  const intSigFigs = intPart.replace(/^0+/, '').length;
+  const leadingZeros = fracPart.match(/^0*/)![0].length;
+  const fracAllowed = leadingZeros + Math.max(0, 6 - intSigFigs);
+  const trimmed = fracPart.slice(0, fracAllowed).replace(/0+$/, '');
+  return trimmed ? `${formattedInt}.${trimmed}` : formattedInt;
+};
+
 function swapAddressInArgsTraverse<T>(
   args: T,
   from: string,
@@ -1514,7 +1529,7 @@ export const TxOptions = () => {
       key={`${check.target}-${check.token}-${check.balance}`}
       className="text-lg font-bold"
     >
-      {sign} {formatter.format(Math.abs(Number(check.balance)))}{' '}
+      {sign} {formatAbsBalance(check.balance)}{' '}
       {check.symbol}
       {isSafeRouterFlow && check.target && (
         <span className="text-sm font-normal text-muted-foreground">
