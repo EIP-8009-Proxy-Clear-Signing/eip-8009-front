@@ -1,4 +1,4 @@
-import { useAccount, useWalletClient } from "wagmi";
+import { useAccount, usePublicClient, useWalletClient } from "wagmi";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,18 +8,31 @@ import { useSafeApp } from "@/providers/safe-app-provider";
 import { Address, Hex } from "viem";
 
 import { useModalPromise } from "@/hooks/use-modal-promise";
+import { getContract } from "@/lib/contracts";
+import {
+  decodeSafeExecTransaction,
+  validateSafeRouterSetup,
+} from "@/lib/safe-utils";
 
 function ImpersonatorWalletConnect() {
   const { address, chainId } = useAccount();
   const { data: client } = useWalletConnectClient();
   const [wcUrl, setWcUrl] = useState("");
   const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient();
   const { openModal } = useModalPromise();
   const { safeInfo, safe } = useSafeApp();
 
   useEffect(() => {
-    if (!client || !address || !chainId || !walletClient) {
-      console.log("not ready", client, address, chainId, walletClient);
+    if (!client || !address || !chainId || !walletClient || !publicClient) {
+      console.log(
+        "not ready",
+        client,
+        address,
+        chainId,
+        walletClient,
+        publicClient
+      );
       return;
     }
 
@@ -85,15 +98,38 @@ function ImpersonatorWalletConnect() {
 
           try {
             let hash: string;
+            const requestData = (txRequest.data ?? "0x") as Hex;
+            const safeExecution = decodeSafeExecTransaction(
+              txRequest.to as Address,
+              requestData
+            );
 
-            if (safe && safeInfo) {
+            if (safeExecution) {
+              const safeRouter = getContract("safeRouter", chainId);
+
+              await validateSafeRouterSetup({
+                publicClient,
+                safe: safeExecution.safe,
+                safeRouter: safeRouter.address,
+                executor: address,
+              });
+
+              hash = await openModal({
+                to: safeExecution.safeTx.to,
+                data: safeExecution.safeTx.data,
+                value: safeExecution.safeTx.value,
+                safeContext: safeExecution,
+              });
+            } else if (safe && safeInfo) {
               try {
                 const result = await safe.txs.send({
                   txs: [
                     {
                       to: txRequest.to as Address,
-                      data: txRequest.data as Hex,
-                      value: String(txRequest.value ? BigInt(txRequest.value) : 0n),
+                      data: requestData,
+                      value: String(
+                        txRequest.value ? BigInt(txRequest.value) : 0n
+                      ),
                     },
                   ],
                 });
@@ -105,7 +141,8 @@ function ImpersonatorWalletConnect() {
             } else {
               hash = await openModal({
                 to: txRequest.to as Address,
-                data: txRequest.data as Hex,
+                data: requestData,
+                value: txRequest.value,
               });
             }
 
@@ -178,7 +215,16 @@ function ImpersonatorWalletConnect() {
         client.removeAllListeners("session_delete");
       }
     };
-  }, [client, address, chainId, walletClient, safe, safeInfo]);
+  }, [
+    client,
+    address,
+    chainId,
+    walletClient,
+    publicClient,
+    openModal,
+    safe,
+    safeInfo,
+  ]);
 
   async function handleConnect() {
     if (!client) return;
