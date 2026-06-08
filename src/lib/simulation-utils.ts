@@ -19,6 +19,8 @@ export interface SimulationResult {
   results: ReadonlyArray<{
     status: 'success' | 'failure';
     gasUsed?: bigint;
+    data?: `0x${string}`;
+    error?: unknown;
   }>;
 }
 
@@ -78,7 +80,11 @@ export interface ModifiedSimulationParams {
  */
 export async function simulateOriginalTransaction(
   params: OriginalSimulationParams
-): Promise<{ success: boolean; result?: SimulationResult }> {
+): Promise<{
+  success: boolean;
+  result?: SimulationResult;
+  error?: unknown;
+}> {
   const {
     publicClient,
     address,
@@ -90,6 +96,8 @@ export async function simulateOriginalTransaction(
   console.log('Simulating original transaction for approximate changes...');
 
   let retries = maxRetries;
+  let lastResult: SimulationResult | undefined;
+  let lastError: unknown;
   while (retries > 0) {
     try {
       const result = await publicClient.simulateCalls({
@@ -108,25 +116,28 @@ export async function simulateOriginalTransaction(
         console.log('Original simulation successful');
         return { success: true, result: result as SimulationResult };
       } else {
-        console.warn('Original simulation returned failure status');
+        lastResult = result as SimulationResult;
+        console.warn('Original simulation returned failure status', result.results[0]);
         retries -= 1;
         if (retries > 0) {
           await new Promise((resolve) => setTimeout(resolve, retryDelay));
         }
       }
-    } catch {
+    } catch (error) {
+      lastError = error;
       retries -= 1;
       if (retries > 0) {
         await new Promise((resolve) => setTimeout(resolve, retryDelay));
       } else {
         console.warn(
-          'Original simulation failed after all retries (expected for Permit2)'
+          'Original simulation failed after all retries (expected for Permit2)',
+          error
         );
       }
     }
   }
 
-  return { success: false };
+  return { success: false, result: lastResult, error: lastError };
 }
 
 /**

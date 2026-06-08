@@ -24,7 +24,7 @@ export const contracts = {
       abi: universalRouterAbi,
     },
     safeRouter: {
-      address: '0xE5908249E7701CD8Ed1558676DF7ccA823c891D9',
+      address: '0x7d7Eae4d58e9D2A92a48EE55f249a2903fD1d0d0',
       abi: safeRouterAbi,
     },
   },

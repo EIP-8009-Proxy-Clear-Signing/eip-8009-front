@@ -1,11 +1,13 @@
 import { useAccount, usePublicClient, useWalletClient } from "wagmi";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWalletConnectClient } from "@/hooks/use-wallet-connect-client.ts";
 import { useSafeApp } from "@/providers/safe-app-provider";
 
-import { Address, Hex } from "viem";
+import { Address, Hex, isAddressEqual } from "viem";
 
 import { useModalPromise } from "@/hooks/use-modal-promise";
 import { getContract } from "@/lib/contracts";
@@ -13,25 +15,70 @@ import {
   decodeSafeExecTransaction,
   validateSafeRouterSetup,
 } from "@/lib/safe-utils";
+import { shortenAddress } from "@/lib/utils";
+
+type WalletConnectAccountMode = "wallet" | "safeRouter";
+
+const signingMethods = new Set([
+  "personal_sign",
+  "eth_sign",
+  "eth_signTypedData",
+  "eth_signTypedData_v3",
+  "eth_signTypedData_v4",
+]);
+
+const toQuantity = (value: bigint) => `0x${value.toString(16)}`;
 
 function ImpersonatorWalletConnect() {
   const { address, chainId } = useAccount();
   const { data: client } = useWalletConnectClient();
   const [wcUrl, setWcUrl] = useState("");
+  const [accountMode, setAccountMode] =
+    useState<WalletConnectAccountMode>("safeRouter");
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
   const { openModal } = useModalPromise();
   const { safeInfo, safe } = useSafeApp();
 
+  const safeRouterAddress = useMemo(() => {
+    if (!chainId) return undefined;
+
+    try {
+      return getContract("safeRouter", chainId).address;
+    } catch {
+      return undefined;
+    }
+  }, [chainId]);
+
+  const walletConnectAddress =
+    accountMode === "safeRouter" && safeRouterAddress
+      ? safeRouterAddress
+      : address;
+  const walletConnectAccount =
+    chainId && walletConnectAddress
+      ? `eip155:${chainId}:${walletConnectAddress}`
+      : undefined;
+  const walletConnectChain = chainId ? `eip155:${chainId}` : undefined;
+
   useEffect(() => {
-    if (!client || !address || !chainId || !walletClient || !publicClient) {
+    if (
+      !client ||
+      !address ||
+      !chainId ||
+      !walletClient ||
+      !publicClient ||
+      !walletConnectAddress ||
+      !walletConnectAccount ||
+      !walletConnectChain
+    ) {
       console.log(
         "not ready",
         client,
         address,
         chainId,
         walletClient,
-        publicClient
+        publicClient,
+        walletConnectAddress,
       );
       return;
     }
@@ -41,8 +88,8 @@ function ImpersonatorWalletConnect() {
         id: proposal.id,
         namespaces: {
           eip155: {
-            chains: ["eip155:11155111"],
-            accounts: [`eip155:${chainId}:${address}`],
+            chains: [walletConnectChain],
+            accounts: [walletConnectAccount],
             methods: [
               "eth_sendTransaction",
               "personal_sign",
@@ -73,16 +120,97 @@ function ImpersonatorWalletConnect() {
       const { method, params } = event.params.request;
       console.log("session_request", method, params);
 
-      const formattedParams = params.map((p: string | object) => {
-        if (typeof p === "string") {
-          try {
-            return JSON.parse(p);
-          } catch {
+      const formattedParams = Array.isArray(params)
+        ? params.map((p: string | object) => {
+            if (typeof p === "string") {
+              try {
+                return JSON.parse(p);
+              } catch {
+                return p;
+              }
+            }
             return p;
+          })
+        : [];
+
+      if (method === "eth_accounts" || method === "eth_requestAccounts") {
+        await client.respond({
+          topic: event.topic,
+          response: {
+            id: event.id,
+            jsonrpc: "2.0",
+            result: [walletConnectAddress],
+          },
+        });
+        return;
+      }
+
+      if (accountMode === "safeRouter") {
+        if (method === "eth_getBalance") {
+          const requestedAddress = formattedParams[0] as Address | undefined;
+
+          if (
+            requestedAddress &&
+            walletConnectAddress &&
+            isAddressEqual(requestedAddress, walletConnectAddress)
+          ) {
+            const balance = await publicClient.getBalance({ address });
+
+            await client.respond({
+              topic: event.topic,
+              response: {
+                id: event.id,
+                jsonrpc: "2.0",
+                result: toQuantity(balance),
+              },
+            });
+            return;
           }
         }
-        return p;
-      });
+
+        if (method === "eth_estimateGas") {
+          const txRequest = formattedParams[0] as
+            | {
+                to?: string;
+                data?: string;
+                from?: string;
+                value?: string;
+                [key: string]: unknown;
+              }
+            | undefined;
+
+          if (
+            txRequest?.from &&
+            walletConnectAddress &&
+            isAddressEqual(txRequest.from as Address, walletConnectAddress)
+          ) {
+            await client.respond({
+              topic: event.topic,
+              response: {
+                id: event.id,
+                jsonrpc: "2.0",
+                result: toQuantity(5_000_000n),
+              },
+            });
+            return;
+          }
+        }
+      }
+
+      if (accountMode === "safeRouter" && signingMethods.has(method)) {
+        await client.respond({
+          topic: event.topic,
+          response: {
+            id: event.id,
+            jsonrpc: "2.0",
+            error: {
+              code: 4001,
+              message: "SafeRouter account cannot sign messages directly",
+            },
+          },
+        });
+        return;
+      }
 
       try {
         if (method === "eth_sendTransaction") {
@@ -93,7 +221,7 @@ function ImpersonatorWalletConnect() {
             value?: string;
             gas?: string;
             gasPrice?: string;
-            [key: string]: any;
+            [key: string]: unknown;
           };
 
           try {
@@ -101,7 +229,7 @@ function ImpersonatorWalletConnect() {
             const requestData = (txRequest.data ?? "0x") as Hex;
             const safeExecution = decodeSafeExecTransaction(
               txRequest.to as Address,
-              requestData
+              requestData,
             );
 
             if (safeExecution) {
@@ -117,7 +245,7 @@ function ImpersonatorWalletConnect() {
               hash = await openModal({
                 to: safeExecution.safeTx.to,
                 data: safeExecution.safeTx.data,
-                value: safeExecution.safeTx.value,
+                value: 0n,
                 safeContext: safeExecution,
               });
             } else if (safe && safeInfo) {
@@ -128,7 +256,7 @@ function ImpersonatorWalletConnect() {
                       to: txRequest.to as Address,
                       data: requestData,
                       value: String(
-                        txRequest.value ? BigInt(txRequest.value) : 0n
+                        txRequest.value ? BigInt(txRequest.value) : 0n,
                       ),
                     },
                   ],
@@ -180,7 +308,7 @@ function ImpersonatorWalletConnect() {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
           method,
-          params: formattedParams,
+          params: formattedParams as never,
         });
 
         await client.respond({
@@ -224,10 +352,14 @@ function ImpersonatorWalletConnect() {
     openModal,
     safe,
     safeInfo,
+    walletConnectAddress,
+    walletConnectAccount,
+    walletConnectChain,
+    accountMode,
   ]);
 
   async function handleConnect() {
-    if (!client) return;
+    if (!client || !walletConnectAddress) return;
     await client.pair({ uri: wcUrl });
   }
 
@@ -249,6 +381,27 @@ function ImpersonatorWalletConnect() {
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
+        <Label>Connect as</Label>
+        <Tabs
+          value={accountMode}
+          onValueChange={(value) =>
+            setAccountMode(value as WalletConnectAccountMode)
+          }
+        >
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="wallet">Wallet</TabsTrigger>
+            <TabsTrigger value="safeRouter" disabled={!safeRouterAddress}>
+              SafeRouter
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {walletConnectAddress && (
+          <p className="text-xs text-muted-foreground">
+            {shortenAddress(walletConnectAddress)}
+          </p>
+        )}
+      </div>
       <Input
         placeholder="wc:"
         onChange={(e) => setWcUrl(e.target.value)}
@@ -258,7 +411,9 @@ function ImpersonatorWalletConnect() {
         <Button variant="secondary" onClick={handleDisconnect}>
           Disconnect
         </Button>
-        <Button onClick={handleConnect}>Connect</Button>
+        <Button onClick={handleConnect} disabled={!walletConnectAddress}>
+          Connect
+        </Button>
       </div>
     </div>
   );
