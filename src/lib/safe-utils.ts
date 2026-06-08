@@ -8,8 +8,8 @@ import {
   isAddressEqual,
   recoverAddress,
   zeroAddress,
-} from 'viem';
-import { safeAbi } from './abis/safe.abi';
+} from "viem";
+import { safeAbi } from "./abis/safe.abi";
 
 export type SafeOperation = 0 | 1;
 
@@ -39,15 +39,15 @@ type ParsedSafeSignature = {
 };
 
 export function toBigIntValue(value?: string | number | bigint): bigint {
-  if (value === undefined || value === null || value === '') return 0n;
+  if (value === undefined || value === null || value === "") return 0n;
   return BigInt(value);
 }
 
 export function decodeSafeExecTransaction(
   safeAddress: Address,
-  data?: Hex
+  data?: Hex,
 ): SafeExecutionRequest | null {
-  if (!data || data === '0x') return null;
+  if (!data || data === "0x") return null;
 
   try {
     const decoded = decodeFunctionData({
@@ -55,7 +55,7 @@ export function decodeSafeExecTransaction(
       data,
     });
 
-    if (decoded.functionName !== 'execTransaction') return null;
+    if (decoded.functionName !== "execTransaction") return null;
 
     const [
       to,
@@ -91,7 +91,7 @@ export function decodeSafeExecTransaction(
       },
     };
   } catch (error) {
-    console.debug('Not a Safe execTransaction request:', error);
+    console.debug("Not a Safe execTransaction request:", error);
     return null;
   }
 }
@@ -108,23 +108,23 @@ export async function validateSafeRouterSetup(params: {
     publicClient.readContract({
       abi: safeAbi,
       address: safe,
-      functionName: 'isOwner',
+      functionName: "isOwner",
       args: [executor],
     }),
     publicClient.readContract({
       abi: safeAbi,
       address: safe,
-      functionName: 'isOwner',
+      functionName: "isOwner",
       args: [safeRouter],
     }),
   ]);
 
   if (!executorIsOwner) {
-    throw new Error('Connected wallet is not an owner of this Safe');
+    throw new Error("Connected wallet is not an owner of this Safe");
   }
 
   if (!routerIsOwner) {
-    throw new Error('SafeRouter is not an owner of this Safe');
+    throw new Error("SafeRouter is not an owner of this Safe");
   }
 }
 
@@ -144,11 +144,22 @@ export async function prepareSafeRouterSafeTx(params: {
       continue;
     }
 
+    const ownerIsSafeOwner = await publicClient.readContract({
+      abi: safeAbi,
+      address: safe,
+      functionName: "isOwner",
+      args: [item.owner],
+    });
+
+    if (!ownerIsSafeOwner) {
+      continue;
+    }
+
     if (item.v === 1) {
       const approved = await publicClient.readContract({
         abi: safeAbi,
         address: safe,
-        functionName: 'approvedHashes',
+        functionName: "approvedHashes",
         args: [item.owner, safeTxHash],
       });
 
@@ -163,43 +174,65 @@ export async function prepareSafeRouterSafeTx(params: {
   const threshold = await publicClient.readContract({
     abi: safeAbi,
     address: safe,
-    functionName: 'getThreshold',
+    functionName: "getThreshold",
   });
 
-  if (BigInt(validSignatures.length + 1) < threshold) {
+  if (threshold <= 1n) {
     throw new Error(
-      `Not enough Safe signatures for router execution: ${validSignatures.length + 1}/${threshold}`
+      "Safe threshold must include at least one owner plus SafeRouter",
     );
   }
 
-  const routerSigPosition = validSignatures.filter(
-    ({ owner }) => BigInt(owner) < BigInt(safeRouter)
-  ).length;
+  const requiredHumanSignatures = threshold - 1n;
+  if (BigInt(validSignatures.length) < requiredHumanSignatures) {
+    throw new Error(
+      `Not enough Safe signatures for router execution: ${validSignatures.length}/${requiredHumanSignatures}`,
+    );
+  }
+
+  validSignatures.sort((left, right) =>
+    BigInt(left.owner) < BigInt(right.owner) ? -1 : 1,
+  );
+  const humanSignatures: ParsedSafeSignature[] = [];
+  for (const item of validSignatures) {
+    if (BigInt(humanSignatures.length) >= requiredHumanSignatures) break;
+    humanSignatures.push(item);
+  }
 
   return {
     ...safeTx,
     signatures: joinSafeSignatures(
-      validSignatures.map(({ signature }) => signature)
+      humanSignatures.map(({ signature }) => signature),
     ),
-    routerSigPosition: BigInt(routerSigPosition),
+    routerSigPosition: getRouterSignaturePosition(
+      humanSignatures.map(({ owner }) => owner),
+      safeRouter,
+    ),
   };
+}
+
+function getRouterSignaturePosition(humanOwners: Address[], safeRouter: Address) {
+  const routerValue = BigInt(safeRouter);
+  return BigInt(
+    humanOwners.filter((owner) => BigInt(owner) < routerValue).length,
+  );
 }
 
 async function getSafeTxHash(
   publicClient: PublicClient,
   safe: Address,
-  safeTx: SafeTx
+  safeTx: SafeTx,
 ): Promise<Hex> {
   const nonce = await publicClient.readContract({
     abi: safeAbi,
     address: safe,
-    functionName: 'nonce',
+    functionName: "nonce",
   });
 
   return await publicClient.readContract({
     abi: safeAbi,
     address: safe,
-    functionName: 'getTransactionHash',
+    functionName: "getTransactionHash",
     args: [
       safeTx.to,
       safeTx.value,
@@ -217,16 +250,16 @@ async function getSafeTxHash(
 
 async function parseSafeSignatures(
   signatures: Hex,
-  safeTxHash: Hex
+  safeTxHash: Hex,
 ): Promise<ParsedSafeSignature[]> {
-  if (signatures === '0x') return [];
+  if (signatures === "0x") return [];
 
   const hex = signatures.slice(2);
   const signatureHexLength = 65 * 2;
 
   if (hex.length % signatureHexLength !== 0) {
     throw new Error(
-      'Safe contract signatures are not supported by this SafeRouter version'
+      "Safe contract signatures are not supported by this SafeRouter version",
     );
   }
 
@@ -239,13 +272,13 @@ async function parseSafeSignatures(
     chunks.map(async (signature) => ({
       signature,
       ...(await getSignatureOwner(signature, safeTxHash)),
-    }))
+    })),
   );
 }
 
 async function getSignatureOwner(
   signature: Hex,
-  safeTxHash: Hex
+  safeTxHash: Hex,
 ): Promise<{ owner: Address; v: number }> {
   const raw = signature.slice(2);
   const r = `0x${raw.slice(0, 64)}` as Hex;
@@ -254,7 +287,7 @@ async function getSignatureOwner(
 
   if (v === 0) {
     throw new Error(
-      'Safe contract signatures are not supported by this SafeRouter version'
+      "Safe contract signatures are not supported by this SafeRouter version",
     );
   }
 
@@ -281,6 +314,6 @@ async function getSignatureOwner(
 }
 
 function joinSafeSignatures(signatures: Hex[]): Hex {
-  if (signatures.length === 0) return '0x';
-  return `0x${signatures.map((signature) => signature.slice(2)).join('')}`;
+  if (signatures.length === 0) return "0x";
+  return `0x${signatures.map((signature) => signature.slice(2)).join("")}`;
 }

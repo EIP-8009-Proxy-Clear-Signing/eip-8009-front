@@ -3,7 +3,7 @@ export const safeRouterAbi = [
     inputs: [
       {
         internalType: "uint256",
-        name: "providedWithRouter",
+        name: "provided",
         type: "uint256",
       },
       {
@@ -60,6 +60,17 @@ export const safeRouterAbi = [
       },
     ],
     name: "InvalidRouterSignaturePosition",
+    type: "error",
+  },
+  {
+    inputs: [
+      {
+        internalType: "uint256",
+        name: "threshold",
+        type: "uint256",
+      },
+    ],
+    name: "InvalidSafeThreshold",
     type: "error",
   },
   {
@@ -236,11 +247,6 @@ export const safeRouterAbi = [
         type: "address",
       },
       {
-        internalType: "contract ISafe",
-        name: "safe",
-        type: "address",
-      },
-      {
         components: [
           {
             internalType: "address",
@@ -261,6 +267,11 @@ export const safeRouterAbi = [
         internalType: "struct IBalanceProxy.Balance[]",
         name: "diffs",
         type: "tuple[]",
+      },
+      {
+        internalType: "contract ISafe",
+        name: "safe",
+        type: "address",
       },
       {
         components: [
@@ -338,11 +349,6 @@ export const safeRouterAbi = [
         type: "address",
       },
       {
-        internalType: "contract ISafe",
-        name: "safe",
-        type: "address",
-      },
-      {
         components: [
           {
             internalType: "string",
@@ -380,6 +386,11 @@ export const safeRouterAbi = [
         internalType: "struct IBalanceProxy.Balance[]",
         name: "diffs",
         type: "tuple[]",
+      },
+      {
+        internalType: "contract ISafe",
+        name: "safe",
+        type: "address",
       },
       {
         components: [
@@ -457,11 +468,6 @@ export const safeRouterAbi = [
         type: "address",
       },
       {
-        internalType: "contract ISafe",
-        name: "safe",
-        type: "address",
-      },
-      {
         components: [
           {
             internalType: "address",
@@ -482,6 +488,11 @@ export const safeRouterAbi = [
         internalType: "struct IBalanceProxy.Balance[]",
         name: "postBalances",
         type: "tuple[]",
+      },
+      {
+        internalType: "contract ISafe",
+        name: "safe",
+        type: "address",
       },
       {
         components: [
@@ -559,11 +570,6 @@ export const safeRouterAbi = [
         type: "address",
       },
       {
-        internalType: "contract ISafe",
-        name: "safe",
-        type: "address",
-      },
-      {
         components: [
           {
             internalType: "string",
@@ -601,6 +607,11 @@ export const safeRouterAbi = [
         internalType: "struct IBalanceProxy.Balance[]",
         name: "postBalances",
         type: "tuple[]",
+      },
+      {
+        internalType: "contract ISafe",
+        name: "safe",
+        type: "address",
       },
       {
         components: [
