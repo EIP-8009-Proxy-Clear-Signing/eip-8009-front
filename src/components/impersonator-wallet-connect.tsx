@@ -29,10 +29,25 @@ const signingMethods = new Set([
 
 const toQuantity = (value: bigint) => `0x${value.toString(16)}`;
 
+type SessionPeer = {
+  name?: string;
+  url?: string;
+  icons?: string[];
+};
+
+type SignClientLike = {
+  session: { getAll: () => { peer?: { metadata?: SessionPeer } }[] };
+};
+
+const getActivePeer = (client: SignClientLike): SessionPeer | null =>
+  client.session.getAll()[0]?.peer?.metadata ?? null;
+
 function ImpersonatorWalletConnect() {
   const { address, chainId } = useAccount();
   const { data: client } = useWalletConnectClient();
   const [wcUrl, setWcUrl] = useState("");
+  const [sessionPeer, setSessionPeer] = useState<SessionPeer | null>(null);
+  const hasActiveSession = sessionPeer !== null;
   const [accountMode, setAccountMode] =
     useState<WalletConnectAccountMode>("safeRouter");
   const { data: walletClient } = useWalletClient();
@@ -59,6 +74,11 @@ function ImpersonatorWalletConnect() {
       ? `eip155:${chainId}:${walletConnectAddress}`
       : undefined;
   const walletConnectChain = chainId ? `eip155:${chainId}` : undefined;
+
+  useEffect(() => {
+    if (!client) return;
+    setSessionPeer(getActivePeer(client));
+  }, [client]);
 
   useEffect(() => {
     if (
@@ -110,10 +130,17 @@ function ImpersonatorWalletConnect() {
           },
         },
       });
+      setSessionPeer(
+        proposal.params.proposer.metadata ?? getActivePeer(client),
+      );
     });
 
     client.on("session_event", (event) => {
       console.log("session_event", event);
+    });
+
+    client.on("session_delete", () => {
+      setSessionPeer(getActivePeer(client));
     });
 
     client.on("session_request", async (event) => {
@@ -361,6 +388,7 @@ function ImpersonatorWalletConnect() {
   async function handleConnect() {
     if (!client || !walletConnectAddress) return;
     await client.pair({ uri: wcUrl });
+    setWcUrl("");
   }
 
   async function handleDisconnect() {
@@ -377,6 +405,7 @@ function ImpersonatorWalletConnect() {
         }),
       ),
     );
+    setSessionPeer(null);
   }
 
   return (
@@ -402,18 +431,47 @@ function ImpersonatorWalletConnect() {
           </p>
         )}
       </div>
-      <Input
-        placeholder="wc:"
-        onChange={(e) => setWcUrl(e.target.value)}
-        value={wcUrl}
-      />
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="secondary" onClick={handleDisconnect}>
-          Disconnect
-        </Button>
-        <Button onClick={handleConnect} disabled={!walletConnectAddress}>
-          Connect
-        </Button>
+      {hasActiveSession ? (
+        <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+          </span>
+          {sessionPeer?.icons?.[0] && (
+            <img
+              src={sessionPeer.icons[0]}
+              alt=""
+              className="h-5 w-5 shrink-0 rounded-sm"
+            />
+          )}
+          <div className="min-w-0 flex flex-col">
+            <span className="text-sm font-medium leading-tight">
+              {sessionPeer?.name || "Connected"}
+            </span>
+            {sessionPeer?.url && (
+              <span className="truncate text-xs text-muted-foreground leading-tight">
+                {sessionPeer.url.replace(/^https?:\/\//, "")}
+              </span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <Input
+          placeholder="wc:"
+          onChange={(e) => setWcUrl(e.target.value)}
+          value={wcUrl}
+        />
+      )}
+      <div className="grid grid-cols-1 gap-2">
+        {hasActiveSession ? (
+          <Button variant="secondary" onClick={handleDisconnect}>
+            Disconnect
+          </Button>
+        ) : (
+          <Button onClick={handleConnect} disabled={!walletConnectAddress}>
+            Connect
+          </Button>
+        )}
       </div>
     </div>
   );
