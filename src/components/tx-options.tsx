@@ -603,10 +603,7 @@ export const TxOptions = () => {
         return;
       }
 
-      const isUniversalRouter = isUniversalRouterTransaction(
-        tx.to,
-        uniswapRouter.address,
-      );
+      const isUniversalRouter = isUniversalRouterTransaction(tx.to, chainId);
 
       // Step 2: Simulate ORIGINAL transaction
       setLoadingStep("Simulating original transaction...");
@@ -1073,10 +1070,7 @@ export const TxOptions = () => {
         return;
       }
 
-      const isUniversalRouter = isUniversalRouterTransaction(
-        tx.to,
-        uniswapRouter.address,
-      );
+      const isUniversalRouter = isUniversalRouterTransaction(tx.to, chainId);
 
       if (isUniversalRouter) {
         logUniversalRouterCommands(tx.data, uniswapRouter.abi);
@@ -1152,7 +1146,7 @@ export const TxOptions = () => {
           ? []
           : (approvalsToUse = tokenApprovals.map((approval) => ({
               ...approval,
-              target: uniswapRouter.address,
+              target: tx.to,
             })));
 
         withdrawalsToUse = [];
