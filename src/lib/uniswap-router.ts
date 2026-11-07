@@ -3,9 +3,13 @@ import {
   encodeFunctionData,
   encodeAbiParameters,
   decodeAbiParameters,
+  hexToNumber,
+  slice,
   Abi,
+  AbiParameter,
 } from 'viem';
 import { toast } from 'sonner';
+import { getContract } from './contracts';
 
 /**
  * Universal Router contract details
@@ -79,24 +83,33 @@ const V4_ACTIONS = {
 } as const;
 
 /**
- * Checks if a transaction targets the Universal Router
+ * Checks if a transaction targets a Universal Router deployment
+ *
+ * Both the current router (used by app.uniswap.org) and the legacy one are
+ * recognised, so their calldata gets rewritten for pre-transferred tokens.
  *
  * @param txTo - Transaction target address
- * @param routerAddress - Universal Router contract address
- * @returns True if transaction targets the Universal Router
+ * @param chainId - Chain the transaction is sent on
+ * @returns True if transaction targets a known Universal Router
  *
  * @example
  * const isRouter = isUniversalRouterTransaction(
- *   "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD",
- *   UNISWAP_UNIVERSAL_ROUTER
+ *   "0x7E4f6c5e954Da5c61B3423D81E2277431Ac043f3",
+ *   sepolia.id
  * );
  * // isRouter: true
  */
 export function isUniversalRouterTransaction(
   txTo: string | undefined,
-  routerAddress: string
+  chainId: number
 ): boolean {
-  return txTo?.toLowerCase() === routerAddress.toLowerCase();
+  const routers = [
+    getContract('uniswapRouter', chainId),
+    getContract('uniswapRouterLegacy', chainId),
+  ];
+  return routers.some(
+    (router) => router.address.toLowerCase() === txTo?.toLowerCase()
+  );
 }
 
 /**
@@ -331,211 +344,96 @@ function modifyV4Swap(
 }
 
 /**
- * Modifies Uniswap V3 swap parameters for pre-transferred tokens
+ * Returns the ABI layout of a V2/V3 swap input
  *
- * **Problem**: V3 swaps have two fields that need modification:
- * 1. **recipient**: Who receives output tokens
- * 2. **payerIsUser**: Who provides input tokens
+ * The current router appends `uint256[] minHopPriceX36` (per-hop price guard),
+ * the legacy one ends at `payerIsUser`. The path is the first dynamic field,
+ * so its offset equals the head size: 0xa0 (5 slots) or 0xc0 (6 slots).
+ */
+function swapInputParams(
+  swapInput: `0x${string}`,
+  pathType: 'bytes' | 'address[]'
+): AbiParameter[] {
+  const params: AbiParameter[] = [
+    { name: 'recipient', type: 'address' },
+    { name: 'amount', type: 'uint256' },
+    { name: 'amountLimit', type: 'uint256' },
+    { name: 'path', type: pathType },
+    { name: 'payerIsUser', type: 'bool' },
+  ];
+  const pathOffset = hexToNumber(slice(swapInput, 96, 128));
+  if (pathOffset === 5 * 32) return params;
+  if (pathOffset === 6 * 32) {
+    return [...params, { name: 'minHopPriceX36', type: 'uint256[]' }];
+  }
+  throw new Error(`Unknown swap input layout (path offset ${pathOffset})`);
+}
+
+/** Recipient placeholder the router resolves to its caller (ActionConstants.MSG_SENDER) */
+const MSG_SENDER = '0x0000000000000000000000000000000000000001';
+
+/**
+ * Modifies a Uniswap V2/V3 swap input for pre-transferred tokens
+ *
+ * **Swap Input Structure** (ABI-encoded):
+ * - recipient (address)
+ * - amountIn / amountOut (uint256)
+ * - amountOutMinimum / amountInMaximum (uint256)
+ * - path: `bytes` with pool fees for V3, `address[]` for V2
+ * - payerIsUser (bool)
+ * - minHopPriceX36 (uint256[]): current router only, kept unchanged
  *
  * **Our Modifications**:
  * - Set `payerIsUser: false` (tokens pre-transferred to router)
- * - Set `recipient` based on downstream commands:
- *   - **ADDRESS_THIS (0x02)**: If tokens stay in router (for UNWRAP_WETH, SWEEP, etc.)
- *   - **User address**: If tokens go directly to user
+ * - Replace a MSG_SENDER recipient with the user address: the router's
+ *   caller is BalanceProxy, so MSG_SENDER would pay the proxy instead.
+ *   Every other recipient is kept: ADDRESS_THIS (0x02) feeds the next leg,
+ *   UNWRAP_WETH, PAY_PORTION or SWEEP; a V2 pair feeds the next V2 hop;
+ *   an explicit address is where Uniswap sends the output.
  *
- * **V3 Swap Input Structure** (ABI-encoded):
- * - recipient (address): 32 bytes
- * - amountIn (uint256): 32 bytes
- * - amountOutMinimum (uint256): 32 bytes
- * - path (bytes): Dynamic length (encoded separately)
- * - payerIsUser (bool): 32 bytes
- *
- * **Recipient Logic**:
- * We check if there are downstream commands that process the output tokens:
- * - **Has UNWRAP_WETH**: Keep in router → unwrap WETH to ETH
- * - **Has PAY_PORTION**: Keep in router → take fee portion
- * - **Has SWEEP**: Keep in router → sweep remaining tokens
- * - **None of above**: Send directly to user
- *
- * @param swapInput - Encoded V3 swap parameters
+ * @param swapInput - Encoded V2/V3 swap parameters
  * @param index - Command index in Universal Router
- * @param shouldKeepInRouter - Whether to keep tokens in router for downstream commands
- * @param userAddress - User's wallet address (for direct sends)
- * @param commandName - Command name for logging ("V3_SWAP_EXACT_IN" or "V3_SWAP_EXACT_OUT")
- * @returns Modified swap input with updated recipient and payerIsUser
- *
- * @example
- * // Example 1: ETH → USDC (no downstream commands)
- * const modified = modifyV3Swap(
- *   swapInput,
- *   0,
- *   false, // shouldKeepInRouter
- *   userAddress,
- *   "V3_SWAP_EXACT_IN"
- * );
- * // Result: recipient = userAddress, payerIsUser = false
- *
- * @example
- * // Example 2: USDC → ETH (has UNWRAP_WETH)
- * const modified = modifyV3Swap(
- *   swapInput,
- *   0,
- *   true, // shouldKeepInRouter (UNWRAP_WETH follows)
- *   userAddress,
- *   "V3_SWAP_EXACT_IN"
- * );
- * // Result: recipient = ADDRESS_THIS (0x02), payerIsUser = false
- */
-function modifyV3Swap(
-  swapInput: string,
-  index: number,
-  shouldKeepInRouter: boolean,
-  userAddress: string,
-  commandName: string
-): string {
-  console.log(`Modifying ${commandName} at index ${index}`);
-
-  const inputData = '0x' + swapInput.slice(2);
-
-  const recipient = '0x' + inputData.slice(2, 66).slice(24);
-  const amount1 = '0x' + inputData.slice(66, 130);
-  const amount2 = '0x' + inputData.slice(130, 194);
-  const pathOffset = '0x' + inputData.slice(194, 258);
-  const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
-
-  console.log('Old recipient:', recipient);
-  console.log('Old payerIsUser:', payerIsUserOld);
-
-  const pathOffsetInt = parseInt(pathOffset, 16);
-  const pathLengthHex = inputData.slice(
-    2 + pathOffsetInt * 2,
-    2 + pathOffsetInt * 2 + 64
-  );
-  const pathLength = parseInt(pathLengthHex, 16);
-  const pathData = inputData.slice(
-    2 + pathOffsetInt * 2 + 64,
-    2 + pathOffsetInt * 2 + 64 + pathLength * 2
-  );
-
-  let newRecipient: string;
-  if (shouldKeepInRouter) {
-    newRecipient =
-      '0000000000000000000000000000000000000000000000000000000000000002';
-    console.log(
-      'New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands'
-    );
-  } else {
-    newRecipient = userAddress.slice(2).toLowerCase().padStart(64, '0');
-    console.log('New recipient:', '0x' + newRecipient.slice(24));
-  }
-  const newPayerIsUser = '0'.padStart(64, '0');
-
-  console.log('New payerIsUser:', false);
-
-  const newInput =
-    '0x' +
-    newRecipient +
-    amount1.slice(2) +
-    amount2.slice(2) +
-    pathOffset.slice(2) +
-    newPayerIsUser +
-    pathLengthHex +
-    pathData;
-
-  console.log(`Modified ${commandName} input`);
-  return newInput;
-}
-
-/**
- * Modifies Uniswap V2 swap parameters for pre-transferred tokens
- *
- * Similar to V3 swaps, but for V2 AMM pools. V2 swaps have the same fields:
- * - **recipient**: Output token destination
- * - **payerIsUser**: Input token source
- *
- * **V2 vs V3 Difference**:
- * - V2 uses an **address array** for the path (not bytes)
- * - V2 path: [tokenA, tokenB, tokenC] (simple array)
- * - V3 path: encoded bytes with pool fees
- *
- * **Modification Logic** (same as V3):
- * - Set `payerIsUser: false` (use pre-transferred tokens)
- * - Set `recipient` based on downstream commands:
- *   - ADDRESS_THIS (0x02) if tokens processed by downstream commands
- *   - User address if tokens sent directly
- *
- * @param swapInput - Encoded V2 swap parameters
- * @param index - Command index in Universal Router
- * @param shouldKeepInRouter - Whether to keep tokens in router for downstream commands
  * @param userAddress - User's wallet address
  * @param commandName - Command name for logging
+ * @param pathType - `bytes` for V3, `address[]` for V2
  * @returns Modified swap input
  *
  * @example
- * const modified = modifyV2Swap(
- *   swapInput,
- *   0,
- *   false, // Direct to user
- *   userAddress,
- *   "V2_SWAP_EXACT_IN"
- * );
+ * // Last leg of USDC → WETH paid out to MSG_SENDER
+ * const modified = rewriteSwapInput(swapInput, 0, userAddress, "V3_SWAP_EXACT_IN", "bytes");
  * // Result: recipient = userAddress, payerIsUser = false
  */
-function modifyV2Swap(
+function rewriteSwapInput(
   swapInput: string,
   index: number,
-  shouldKeepInRouter: boolean,
   userAddress: string,
-  commandName: string
+  commandName: string,
+  pathType: 'bytes' | 'address[]'
 ): string {
   console.log(`Modifying ${commandName} at index ${index}`);
 
-  const inputData = '0x' + swapInput.slice(2);
-
-  const recipient = '0x' + inputData.slice(2, 66).slice(24);
-  const amount1 = '0x' + inputData.slice(66, 130);
-  const amount2 = '0x' + inputData.slice(130, 194);
-  const pathOffset = '0x' + inputData.slice(194, 258);
-  const payerIsUserOld = BigInt('0x' + inputData.slice(258, 322)) === 1n;
+  const input = swapInput as `0x${string}`;
+  const params = swapInputParams(input, pathType);
+  const [recipient, amount, amountLimit, path, payerIsUser, ...rest] =
+    decodeAbiParameters(params, input);
 
   console.log('Old recipient:', recipient);
-  console.log('Old payerIsUser:', payerIsUserOld);
+  console.log('Old payerIsUser:', payerIsUser);
 
-  const pathOffsetInt = parseInt(pathOffset, 16);
-  const pathArrayLengthHex = inputData.slice(
-    2 + pathOffsetInt * 2,
-    2 + pathOffsetInt * 2 + 64
-  );
-  const pathArrayLength = parseInt(pathArrayLengthHex, 16);
-  const pathArrayData = inputData.slice(
-    2 + pathOffsetInt * 2 + 64,
-    2 + pathOffsetInt * 2 + 64 + pathArrayLength * 64
-  );
+  const newRecipient =
+    String(recipient).toLowerCase() === MSG_SENDER ? userAddress : recipient;
 
-  let newRecipient: string;
-  if (shouldKeepInRouter) {
-    newRecipient =
-      '0000000000000000000000000000000000000000000000000000000000000002';
-    console.log(
-      'New recipient: ADDRESS_THIS (0x02) - tokens will be processed by downstream commands'
-    );
-  } else {
-    newRecipient = userAddress.slice(2).toLowerCase().padStart(64, '0');
-    console.log('New recipient:', '0x' + newRecipient.slice(24));
-  }
-  const newPayerIsUser = '0'.padStart(64, '0');
-
+  console.log('New recipient:', newRecipient);
   console.log('New payerIsUser:', false);
 
-  const newInput =
-    '0x' +
-    newRecipient +
-    amount1.slice(2) +
-    amount2.slice(2) +
-    pathOffset.slice(2) +
-    newPayerIsUser +
-    pathArrayLengthHex +
-    pathArrayData;
+  const newInput = encodeAbiParameters(params, [
+    newRecipient,
+    amount,
+    amountLimit,
+    path,
+    false,
+    ...rest,
+  ]);
 
   console.log(`Modified ${commandName} input`);
   return newInput;
@@ -566,28 +464,20 @@ function modifyV2Swap(
  *    - We pre-transferred tokens, so permit is unnecessary
  *    - Remove command and corresponding input
  *
- * 3. **Analyze Downstream Commands**:
- *    - Check for UNWRAP_WETH, PAY_PORTION, SWEEP
- *    - If present, tokens must stay in router (set recipient to ADDRESS_THIS)
- *    - If absent, tokens can go directly to user
- *
- * 4. **Modify Swap Commands**:
+ * 3. **Modify Swap Commands**:
  *    - **V4_SWAP**: Set `payerIsUser: false` in all SETTLE actions
- *    - **V3_SWAP_***: Set `payerIsUser: false`, adjust recipient
- *    - **V2_SWAP_***: Set `payerIsUser: false`, adjust recipient
+ *    - **V3_SWAP_***: Set `payerIsUser: false`, MSG_SENDER recipient → user
+ *    - **V2_SWAP_***: Set `payerIsUser: false`, MSG_SENDER recipient → user
  *
- * 5. **Re-encode Transaction**:
+ * 4. **Re-encode Transaction**:
  *    - Build new command bytes from modified command list
  *    - Encode new `execute()` call with modified inputs
  *
  * **RECIPIENT LOGIC**:
- * - **ADDRESS_THIS (0x02)**: Tokens stay in router for downstream processing
- *   - Used when: UNWRAP_WETH, PAY_PORTION, or SWEEP commands present
- *   - Example: USDC → WETH → (UNWRAP_WETH) → ETH
- *
- * - **User Address**: Tokens sent directly to user
- *   - Used when: No downstream token processing
- *   - Example: USDC → ETH (direct)
+ * Uniswap already routes every output: ADDRESS_THIS (0x02) for tokens the
+ * next leg, UNWRAP_WETH, PAY_PORTION or SWEEP consumes; the user's address
+ * for the final output. Those are kept. Only MSG_SENDER (0x01) is replaced
+ * with the user address, since BalanceProxy, not the user, calls the router.
  *
  * **ERROR HANDLING**:
  * - If modification fails, returns original calldata
@@ -600,7 +490,7 @@ function modifyV2Swap(
  * @returns Modified calldata compatible with pre-transferred tokens
  *
  * @example
- * // Example: USDC → ETH swap (no downstream commands)
+ * // Example: USDC → WETH swap paid out to MSG_SENDER
  * const modifiedData = modifyUniversalRouterCalldata(
  *   originalTxData,
  *   { address: routerAddress, abi: routerAbi },
@@ -619,7 +509,7 @@ function modifyV2Swap(
  * );
  * // Modifications:
  * // - PERMIT2_PERMIT removed
- * // - V3_SWAP_EXACT_IN: payerIsUser = false, recipient = ADDRESS_THIS (0x02)
+ * // - V3_SWAP_EXACT_IN: payerIsUser = false, recipient stays ADDRESS_THIS (0x02)
  * // - UNWRAP_WETH: Will unwrap WETH that stayed in router
  */
 export function modifyUniversalRouterCalldata(
@@ -664,19 +554,6 @@ export function modifyUniversalRouterCalldata(
         newInputs.splice(permit2PermitIndex, 1);
       }
 
-      const hasUnwrapWeth = newCommands.includes(COMMAND_IDS.UNWRAP_WETH);
-      const hasWrapEth = newCommands.includes(COMMAND_IDS.WRAP_ETH);
-      const hasPayPortion = newCommands.includes(COMMAND_IDS.PAY_PORTION);
-      const hasSweep = newCommands.includes(COMMAND_IDS.SWEEP);
-
-      const shouldKeepInRouter = hasUnwrapWeth || hasPayPortion || hasSweep;
-
-      console.log(`Has UNWRAP_WETH: ${hasUnwrapWeth}`);
-      console.log(`Has WRAP_ETH: ${hasWrapEth}`);
-      console.log(`Has PAY_PORTION: ${hasPayPortion}`);
-      console.log(`Has SWEEP: ${hasSweep}`);
-      console.log(`Should keep tokens in router: ${shouldKeepInRouter}`);
-
       for (let i = 0; i < newCommands.length; i++) {
         const command = newCommands[i];
 
@@ -696,12 +573,12 @@ export function modifyUniversalRouterCalldata(
             command === COMMAND_IDS.V3_SWAP_EXACT_IN
               ? 'V3_SWAP_EXACT_IN'
               : 'V3_SWAP_EXACT_OUT';
-          newInputs[i] = modifyV3Swap(
+          newInputs[i] = rewriteSwapInput(
             newInputs[i],
             i,
-            shouldKeepInRouter,
             userAddress,
-            commandName
+            commandName,
+            'bytes'
           );
         }
 
@@ -713,12 +590,12 @@ export function modifyUniversalRouterCalldata(
             command === COMMAND_IDS.V2_SWAP_EXACT_IN
               ? 'V2_SWAP_EXACT_IN'
               : 'V2_SWAP_EXACT_OUT';
-          newInputs[i] = modifyV2Swap(
+          newInputs[i] = rewriteSwapInput(
             newInputs[i],
             i,
-            shouldKeepInRouter,
             userAddress,
-            commandName
+            commandName,
+            'address[]'
           );
         }
       }

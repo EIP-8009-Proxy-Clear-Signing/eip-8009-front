@@ -20,6 +20,10 @@ export const contracts = {
       abi: proxyPermitRouterAbi,
     },
     uniswapRouter: {
+      address: '0x7E4f6c5e954Da5c61B3423D81E2277431Ac043f3',
+      abi: universalRouterAbi,
+    },
+    uniswapRouterLegacy: {
       address: '0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b',
       abi: universalRouterAbi,
     },

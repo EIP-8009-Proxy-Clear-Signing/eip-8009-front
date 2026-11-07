@@ -11,6 +11,7 @@ import { Address, Hex, isAddressEqual } from "viem";
 
 import { useModalPromise } from "@/hooks/use-modal-promise";
 import { getContract } from "@/lib/contracts";
+import { isPassthroughApproval } from "@/lib/passthrough-utils";
 import {
   decodeSafeExecTransaction,
   validateSafeRouterSetup,
@@ -293,6 +294,18 @@ function ImpersonatorWalletConnect() {
                 console.error("Safe transaction failed:", error);
                 throw error;
               }
+            } else if (
+              accountMode === "wallet" &&
+              (!txRequest.from ||
+                isAddressEqual(txRequest.from as Address, address)) &&
+              isPassthroughApproval(txRequest)
+            ) {
+              hash = await walletClient.sendTransaction({
+                account: address,
+                to: txRequest.to as Address,
+                data: requestData,
+                value: txRequest.value ? BigInt(txRequest.value) : 0n,
+              });
             } else {
               hash = await openModal({
                 to: txRequest.to as Address,
